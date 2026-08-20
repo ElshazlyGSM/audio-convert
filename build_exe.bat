@@ -7,8 +7,12 @@ if not exist "tools\ffmpeg-essentials" (
 )
 
 for /f "usebackq delims=" %%F in (`powershell -NoProfile -Command "Get-ChildItem 'tools\ffmpeg-essentials' -Recurse -Filter ffmpeg.exe | Select-Object -First 1 -ExpandProperty FullName"`) do set "FFMPEG_EXE=%%F"
+for /f "usebackq delims=" %%F in (`powershell -NoProfile -Command "Get-ChildItem 'tools\ffmpeg-essentials' -Recurse -Filter ffplay.exe | Select-Object -First 1 -ExpandProperty FullName"`) do set "FFPLAY_EXE=%%F"
+for /f "usebackq delims=" %%F in (`powershell -NoProfile -Command "Get-ChildItem 'tools\ffmpeg-essentials' -Recurse -Filter ffprobe.exe | Select-Object -First 1 -ExpandProperty FullName"`) do set "FFPROBE_EXE=%%F"
 if "%FFMPEG_EXE%"=="" for /f "usebackq delims=" %%F in (`powershell -NoProfile -Command "(Get-Item (Get-Command ffmpeg).Source).Target"`) do set "FFMPEG_EXE=%%F"
 if "%FFMPEG_EXE%"=="" for /f "usebackq delims=" %%F in (`powershell -NoProfile -Command "(Get-Command ffmpeg).Source"`) do set "FFMPEG_EXE=%%F"
+if "%FFPLAY_EXE%"=="" for /f "usebackq delims=" %%F in (`powershell -NoProfile -Command "(Get-Command ffplay).Source"`) do set "FFPLAY_EXE=%%F"
+if "%FFPROBE_EXE%"=="" for /f "usebackq delims=" %%F in (`powershell -NoProfile -Command "(Get-Command ffprobe).Source"`) do set "FFPROBE_EXE=%%F"
 
 if "%FFMPEG_EXE%"=="" (
     echo FFmpeg was not found.
@@ -16,5 +20,17 @@ if "%FFMPEG_EXE%"=="" (
     exit /b 1
 )
 
-python -m PyInstaller --noconfirm --onefile --windowed --name SongCoverTool --add-binary "%FFMPEG_EXE%;." gui.py
+if "%FFPLAY_EXE%"=="" (
+    echo FFplay was not found.
+    pause
+    exit /b 1
+)
+
+if "%FFPROBE_EXE%"=="" (
+    echo FFprobe was not found.
+    pause
+    exit /b 1
+)
+
+python -m PyInstaller --noconfirm --onefile --windowed --name MediaAudioStudio --add-binary "%FFMPEG_EXE%;." --add-binary "%FFPLAY_EXE%;." --add-binary "%FFPROBE_EXE%;." --collect-all yt_dlp gui.py
 pause

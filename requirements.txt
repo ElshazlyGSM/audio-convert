@@ -2,3 +2,5 @@ requests
 mutagen
 pillow
 pyinstaller
+python-vlc
+yt-dlp
