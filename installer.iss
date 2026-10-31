@@ -2,7 +2,11 @@
 AppId={{E9B8C2E5-0D99-4A2C-8A3E-6B5B8B5B9A41}
 AppName=Media Audio Studio
 AppVersion=1.0.0
-AppPublisher=Media Audio Studio
+AppPublisher=ahmed elshazly
+AppPublisherURL=mailto:Elshazly.gsm@gmail.com
+AppSupportURL=mailto:Elshazly.gsm@gmail.com
+AppUpdatesURL=mailto:Elshazly.gsm@gmail.com
+AppContact=Elshazly.gsm@gmail.com
 DefaultDirName={autopf}\Media Audio Studio
 DefaultGroupName=Media Audio Studio
 DisableProgramGroupPage=yes

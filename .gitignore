@@ -43,6 +43,7 @@ _gui_format_test/
 
 # OS/editor files
 .DS_Store
+._*
 Thumbs.db
 desktop.ini
 .vscode/

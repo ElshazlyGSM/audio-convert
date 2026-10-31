@@ -32,6 +32,6 @@ if "%FFPROBE_EXE%"=="" (
     exit /b 1
 )
 
-python -m PyInstaller --noconfirm --onedir --windowed --name MediaAudioStudio --add-binary "%FFMPEG_EXE%;." --add-binary "%FFPLAY_EXE%;." --add-binary "%FFPROBE_EXE%;." --collect-all yt_dlp gui.py
+py -3.12 -m PyInstaller --noconfirm --onedir --windowed --name MediaAudioStudio --version-file file_version_info.txt --add-binary "%FFMPEG_EXE%;." --add-binary "%FFPLAY_EXE%;." --add-binary "%FFPROBE_EXE%;." --collect-all yt_dlp --collect-all faster_whisper --collect-all ctranslate2 --collect-all tokenizers --collect-all huggingface_hub gui.py
 "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" installer.iss
-pause
+if "%1" neq "--no-pause" pause

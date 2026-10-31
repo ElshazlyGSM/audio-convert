@@ -1,3 +1,13 @@
+"""
+Media Audio Studio - Audio & Video Processing Core
+Developer: ahmed elshazly
+Email: Elshazly.gsm@gmail.com
+"""
+
+__author__ = "ahmed elshazly"
+__email__ = "Elshazly.gsm@gmail.com"
+__version__ = "1.0.0"
+
 import re
 import shutil
 import subprocess
@@ -19,8 +29,25 @@ try:
 except Exception:
     yt_dlp = None
 
+try:
+    import av
+    _orig_av_open = av.open
+    def _safe_av_open(*args, **kwargs):
+        kwargs.pop("metadata_errors", None)
+        return _orig_av_open(*args, **kwargs)
+    av.open = _safe_av_open
+except Exception:
+    av = None
+
+try:
+    import faster_whisper
+except Exception:
+    faster_whisper = None
+
+
 
 folder = Path.cwd()
+APP_DIR = Path(__file__).parent.resolve()
 INPUT_DIR = folder / "input"
 OUTPUT_DIR = folder / "output"
 REFRESH_EXISTING_COVERS = False
@@ -47,29 +74,120 @@ OUTPUT_FORMATS = {
     ".opus": {"label": "OPUS", "args": ["-codec:a", "libopus", "-b:a", "128k"]},
     ".wma": {"label": "WMA", "args": ["-codec:a", "wmav2", "-b:a", "192k"]},
 }
+VIDEO_OUTPUT_FORMATS = {
+    ".mp4": {
+        "label": "MP4",
+        "video_codec": "libx264",
+        "audio_codec": "aac",
+        "container_args": ["-movflags", "+faststart"],
+        "rate_control": "crf",
+    },
+    ".mkv": {
+        "label": "MKV",
+        "video_codec": "libx264",
+        "audio_codec": "aac",
+        "container_args": [],
+        "rate_control": "crf",
+    },
+    ".avi": {
+        "label": "AVI",
+        "video_codec": "mpeg4",
+        "audio_codec": "libmp3lame",
+        "container_args": ["-vtag", "xvid"],
+        "rate_control": "qscale",
+    },
+    ".mov": {
+        "label": "MOV",
+        "video_codec": "libx264",
+        "audio_codec": "aac",
+        "container_args": ["-movflags", "+faststart"],
+        "rate_control": "crf",
+    },
+    ".webm": {
+        "label": "WEBM",
+        "video_codec": "libvpx-vp9",
+        "audio_codec": "libopus",
+        "container_args": ["-deadline", "realtime", "-cpu-used", "4", "-row-mt", "1"],
+        "rate_control": "vp9",
+    },
+    ".wmv": {
+        "label": "WMV",
+        "video_codec": "wmv2",
+        "audio_codec": "wmav2",
+        "container_args": [],
+        "rate_control": "qscale",
+    },
+    ".flv": {
+        "label": "FLV",
+        "video_codec": "libx264",
+        "audio_codec": "aac",
+        "container_args": [],
+        "rate_control": "crf",
+    },
+    ".3gp": {
+        "label": "3GP",
+        "video_codec": "libx264",
+        "audio_codec": "aac",
+        "container_args": [],
+        "rate_control": "crf",
+    },
+}
 QUALITY_OPTIONS = ("128k", "192k", "256k", "320k")
 YOUTUBE_AUDIO_FORMAT_ID = "__audio_mp3__"
+YOUTUBE_BEST_VIDEO_FORMAT_ID = "__best_video_mp4__"
+YOUTUBE_BEST_VIDEO_FORMAT = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
 VIDEO_COMPRESSION_PRESETS = {
-    "Small": {
-        "label": "Small file",
-        "crf": "29",
-        "audio_bitrate": "112k",
+    "Original": {
+        "label": "Original quality (no compression)",
+        "crf": "18",
+        "qscale": "2",
+        "crf_vp9": "20",
+        "audio_bitrate": "320k",
     },
-    "Medium": {
-        "label": "Medium file",
-        "crf": "26",
-        "audio_bitrate": "128k",
+    "Very High": {
+        "label": "Very high quality",
+        "crf": "20",
+        "qscale": "3",
+        "crf_vp9": "24",
+        "audio_bitrate": "192k",
     },
     "High": {
         "label": "High quality",
         "crf": "24",
+        "qscale": "4",
+        "crf_vp9": "28",
         "audio_bitrate": "160k",
+    },
+    "Medium": {
+        "label": "Medium file",
+        "crf": "28",
+        "qscale": "6",
+        "crf_vp9": "33",
+        "audio_bitrate": "128k",
+    },
+    "Small": {
+        "label": "Small file",
+        "crf": "32",
+        "qscale": "8",
+        "crf_vp9": "38",
+        "audio_bitrate": "96k",
+    },
+    "Very Small": {
+        "label": "Very small file",
+        "crf": "36",
+        "qscale": "11",
+        "crf_vp9": "44",
+        "audio_bitrate": "80k",
     },
 }
 VIDEO_RESOLUTION_PRESETS = {
     "Original": {
         "label": "Original size",
         "scale": None,
+    },
+    "1080p": {
+        "label": "Limit to 1080p",
+        "scale": "1920:1080",
     },
     "720p": {
         "label": "Limit to 720p",
@@ -78,6 +196,10 @@ VIDEO_RESOLUTION_PRESETS = {
     "480p": {
         "label": "Limit to 480p",
         "scale": "854:480",
+    },
+    "360p": {
+        "label": "Limit to 360p",
+        "scale": "640:360",
     },
 }
 ENHANCEMENT_PRESETS = {
@@ -133,6 +255,52 @@ ENHANCEMENT_PRESETS = {
 
 class CancelledError(RuntimeError):
     pass
+
+
+WHISPER_MODELS = {
+    "small": {"label": "⚡ Small (~465MB, Recommended Balanced - موصى به)", "id": "small"},
+    "base": {"label": "Base (~140MB, Fast - سريع)", "id": "base"},
+    "turbo": {"label": "🚀 Large-v3 Turbo (~1.5GB, Best Quality - مثل CapCut/NoteGPT)", "id": "turbo"},
+    "tiny": {"label": "Tiny (~75MB, Ultra Fast - فائق السرعة)", "id": "tiny"},
+    "medium": {"label": "💎 Medium (~1.5GB, Very High Quality)", "id": "medium"},
+}
+
+WHISPER_LANGUAGES = {
+    "auto": "Auto Detect (تلقائي)",
+    "ar": "Arabic (العربية)",
+    "en": "English (الإنجليزية)",
+    "fr": "French (الفرنسية)",
+    "es": "Spanish (الإسبانية)",
+    "de": "German (الألمانية)",
+    "it": "Italian (الإيطالية)",
+    "tr": "Turkish (التركية)",
+    "ru": "Russian (الروسية)",
+    "zh": "Chinese (الصينية)",
+    "ja": "Japanese (اليابانية)",
+    "ko": "Korean (الكورية)",
+    "ur": "Urdu (الأوردو)",
+}
+
+SUBTITLE_TRANSLATION_LANGUAGES = {
+    "none": "Original Audio Language (نفس لغة الصوت الأصلية)",
+    "ar": "Arabic (العربية)",
+    "en": "English (الإنجليزية)",
+    "fr": "French (الفرنسية)",
+    "es": "Spanish (الإسبانية)",
+    "de": "German (الألمانية)",
+    "it": "Italian (الإيطالية)",
+    "tr": "Turkish (التركية)",
+    "ru": "Russian (الروسية)",
+    "zh-CN": "Chinese (الصينية)",
+    "ja": "Japanese (اليابانية)",
+    "ko": "Korean (الكورية)",
+    "ur": "Urdu (الأوردو)",
+}
+
+
+def whisper_available():
+    return faster_whisper is not None
+
 
 
 def app_base_dir():
@@ -246,6 +414,35 @@ def fetch_youtube_formats(url):
             "size_label": human_size(best_audio_size),
         }
     ]
+
+    best_video_size = 0
+    try:
+        best_video = max(
+            (
+                item for item in info.get("formats", [])
+                if item.get("vcodec") not in (None, "none") and (item.get("ext") or "").lower() == "mp4"
+            ),
+            key=lambda item: ((item.get("height") or 0), (item.get("tbr") or 0)),
+        )
+        best_video_size = format_filesize(best_video)
+        if best_audio_size:
+            best_video_size += best_audio_size
+    except ValueError:
+        pass
+
+    rows.append(
+        {
+            "format_id": YOUTUBE_BEST_VIDEO_FORMAT_ID,
+            "selector": YOUTUBE_BEST_VIDEO_FORMAT,
+            "label": f"Best video MP4 (recommended) - {human_size(best_video_size)}",
+            "height": 0,
+            "ext": "mp4",
+            "has_audio": True,
+            "size": best_video_size,
+            "size_label": human_size(best_video_size),
+        }
+    )
+
     seen = set()
     for item in info.get("formats", []):
         if item.get("vcodec") in (None, "none"):
@@ -287,9 +484,12 @@ def fetch_youtube_formats(url):
             }
         )
 
-    rows[1:] = sorted(rows[1:], key=lambda row: row["height"], reverse=True)
+    video_rows = sorted(rows[2:], key=lambda row: row["height"], reverse=True)
+    rows = rows[:2] + video_rows
     return {
         "title": info.get("title") or "YouTube video",
+        "live_status": info.get("live_status"),
+        "is_live": bool(info.get("is_live")),
         "formats": rows,
     }
 
@@ -319,8 +519,15 @@ def download_youtube(
                 "preferredquality": preferred_quality,
             }
         ]
+    elif format_id == YOUTUBE_BEST_VIDEO_FORMAT_ID:
+        ydl_format = YOUTUBE_BEST_VIDEO_FORMAT
+        postprocessors = []
     else:
-        ydl_format = str(format_id) if format_has_audio else f"{format_id}+bestaudio[ext=m4a]/bestaudio/best"
+        format_text = str(format_id)
+        if format_has_audio or "+" in format_text or "/" in format_text:
+            ydl_format = format_text
+        else:
+            ydl_format = f"{format_text}+bestaudio[ext=m4a]/bestaudio/best"
         postprocessors = []
 
     def hook(data):
@@ -364,8 +571,20 @@ def download_youtube(
     print(f"YouTube URL: {url}")
     print(f"Output folder: {output_dir}")
     print("Downloading audio as MP3" if format_id == YOUTUBE_AUDIO_FORMAT_ID else f"Downloading format: {format_id}")
-    with ydl_module.YoutubeDL(options) as downloader:
-        result = downloader.extract_info(url, download=True)
+    try:
+        with ydl_module.YoutubeDL(options) as downloader:
+            result = downloader.extract_info(url, download=True)
+    except Exception as exc:
+        can_retry_video = format_id not in (YOUTUBE_AUDIO_FORMAT_ID, YOUTUBE_BEST_VIDEO_FORMAT_ID)
+        if not can_retry_video or cancellation_requested(cancel_callback):
+            raise
+        print(f"Selected format failed: {exc}")
+        print("Retrying with best compatible MP4 format...")
+        retry_options = dict(options)
+        retry_options["format"] = YOUTUBE_BEST_VIDEO_FORMAT
+        retry_options["postprocessors"] = []
+        with ydl_module.YoutubeDL(retry_options) as downloader:
+            result = downloader.extract_info(url, download=True)
 
     if progress_callback:
         progress_callback(1, 1, Path(result.get("title") or "YouTube"), 0)
@@ -585,7 +804,7 @@ def normalize_enhancement(enhancement):
 
 
 def normalize_video_compression(compression):
-    compression = (compression or "Medium").strip()
+    compression = (compression or "Original").strip()
     if compression not in VIDEO_COMPRESSION_PRESETS:
         supported = ", ".join(VIDEO_COMPRESSION_PRESETS)
         raise ValueError(f"Unsupported video compression: {compression}. Supported: {supported}")
@@ -598,6 +817,52 @@ def normalize_video_resolution(resolution):
         supported = ", ".join(VIDEO_RESOLUTION_PRESETS)
         raise ValueError(f"Unsupported video resolution: {resolution}. Supported: {supported}")
     return resolution
+
+
+def normalize_video_output_ext(video_output_ext):
+    if not video_output_ext:
+        return ".mp4"
+    video_output_ext = str(video_output_ext).strip().lower()
+    if video_output_ext in {"original", "keep", "keep_original"}:
+        return "original"
+    if not video_output_ext.startswith("."):
+        video_output_ext = f".{video_output_ext}"
+    if video_output_ext not in VIDEO_OUTPUT_FORMATS:
+        supported = ", ".join(sorted(VIDEO_OUTPUT_FORMATS))
+        raise ValueError(f"Unsupported video output extension: {video_output_ext}. Supported: {supported}")
+    return video_output_ext
+
+
+def ffmpeg_video_args_for(target_ext, compression_preset):
+    info = VIDEO_OUTPUT_FORMATS.get(target_ext) or VIDEO_OUTPUT_FORMATS[".mp4"]
+    rate_control = info.get("rate_control", "crf")
+    video_args = ["-c:v", info["video_codec"]]
+    if rate_control == "crf":
+        video_args.extend(["-preset", "medium", "-crf", str(compression_preset["crf"]), "-pix_fmt", "yuv420p"])
+    elif rate_control == "vp9":
+        video_args.extend(["-b:v", "0", "-crf", str(compression_preset.get("crf_vp9", 33)), "-pix_fmt", "yuv420p"])
+    elif rate_control == "qscale":
+        video_args.extend(["-qscale:v", str(compression_preset.get("qscale", 6))])
+        if info["video_codec"] == "mpeg4":
+            video_args.extend(["-pix_fmt", "yuv420p"])
+
+    audio_bitrate = str(compression_preset["audio_bitrate"])
+    if info["audio_codec"] == "libopus":
+        try:
+            if int(audio_bitrate.rstrip("k")) > 192:
+                audio_bitrate = "192k"
+        except ValueError:
+            audio_bitrate = "192k"
+    elif info["audio_codec"] == "wmav2":
+        try:
+            if int(audio_bitrate.rstrip("k")) > 192:
+                audio_bitrate = "192k"
+        except ValueError:
+            audio_bitrate = "192k"
+
+    audio_args = ["-c:a", info["audio_codec"], "-b:a", audio_bitrate]
+    extra = list(info.get("container_args", []))
+    return [*video_args, *audio_args, *extra]
 
 
 def ffmpeg_filter_args(enhancement):
@@ -730,6 +995,86 @@ def finalize_output(temp_path, final_path):
     return final_path
 
 
+def attach_midpoint_poster(video_path, source_path=None, timestamp=None):
+    video_path = Path(video_path)
+    if video_path.suffix.lower() != ".mp4" or not video_path.exists():
+        return video_path
+
+    poster_source = Path(source_path) if source_path else video_path
+    if timestamp is None:
+        duration = get_media_duration(poster_source) or get_media_duration(video_path) or 0
+        timestamp = duration / 2 if duration else 0
+    timestamp = max(0, float(timestamp or 0))
+
+    poster_path = temp_output_path(video_path.with_suffix(".jpg"))
+    remux_path = temp_output_path(video_path)
+    try:
+        extract = subprocess.run(
+            [
+                str(ffmpeg_executable()),
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-ss",
+                str(timestamp),
+                "-i",
+                str(poster_source),
+                "-frames:v",
+                "1",
+                "-q:v",
+                "2",
+                str(poster_path),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            **hidden_subprocess_kwargs(),
+        )
+        if extract.returncode != 0 or not poster_path.exists():
+            return video_path
+
+        remux = subprocess.run(
+            [
+                str(ffmpeg_executable()),
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(video_path),
+                "-i",
+                str(poster_path),
+                "-map",
+                "0",
+                "-map",
+                "1",
+                "-c",
+                "copy",
+                "-disposition:v:1",
+                "attached_pic",
+                str(remux_path),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            **hidden_subprocess_kwargs(),
+        )
+        if remux.returncode == 0 and validated_media_output(remux_path):
+            remux_path.replace(video_path)
+    finally:
+        remove_partial_output(poster_path)
+        remove_partial_output(remux_path)
+
+    return video_path
+
+
 def get_media_duration(source_path):
     result = subprocess.run(
         [
@@ -849,6 +1194,12 @@ def add_cover_to_audio(audio_path, cover_data, cover_ext, track_name=None, artis
     return False
 
 
+def embed_cover_into_file(audio_path, image_path, track_name=None, artist_name=None):
+    """Embeds cover art from image_path into audio_path (mp3, m4a, flac)."""
+    cover_data, cover_ext = load_cover_file(image_path)
+    return add_cover_to_audio(Path(audio_path), cover_data, cover_ext, track_name=track_name, artist_name=artist_name)
+
+
 def audio_has_cover(audio_path):
     try:
         suffix = audio_path.suffix.lower()
@@ -937,7 +1288,14 @@ def add_missing_cover(
 
 
 def output_path_for(source_path, input_dir=INPUT_DIR, output_dir=OUTPUT_DIR, suffix=None):
-    relative_path = source_path.relative_to(input_dir)
+    source_path = Path(source_path)
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    try:
+        relative_path = source_path.resolve().relative_to(input_dir.resolve())
+    except ValueError:
+        relative_path = Path(source_path.name)
+
     if suffix:
         relative_path = relative_path.with_suffix(suffix)
 
@@ -1010,7 +1368,12 @@ def trim_media(
     if keep_original_format:
         command.extend([
             "-map",
-            "0",
+            "0:v?",
+            "-map",
+            "0:a?",
+            "-map",
+            "0:s?",
+            "-dn",
             "-c",
             "copy",
             "-avoid_negative_ts",
@@ -1067,6 +1430,9 @@ def trim_media(
             print(stderr.strip())
         print(f"Trim failed: {source_path}")
         return None
+
+    if output_path.suffix.lower() == ".mp4":
+        attach_midpoint_poster(output_path, source_path, start_seconds + (trim_duration / 2))
 
     return output_path
 
@@ -1171,17 +1537,19 @@ def convert_audio(
         return None
 
     try:
-        return finalize_output(temp_path, output_path)
+        final_path = finalize_output(temp_path, output_path)
+        return attach_midpoint_poster(final_path, source_path)
     except RuntimeError as exc:
         print(exc)
         return None
 
 
-def compress_video(
+def convert_video(
     source_path,
+    target_ext=".mp4",
     input_dir=INPUT_DIR,
     output_dir=OUTPUT_DIR,
-    compression="Medium",
+    compression="Original",
     resolution="Original",
     skip_if_exists=False,
     progress_callback=None,
@@ -1191,13 +1559,20 @@ def compress_video(
 ):
     if cancellation_requested(cancel_callback):
         raise CancelledError("Operation canceled")
+    source_path = Path(source_path)
     compression = normalize_video_compression(compression)
     resolution = normalize_video_resolution(resolution)
     preset = VIDEO_COMPRESSION_PRESETS[compression]
     resolution_preset = VIDEO_RESOLUTION_PRESETS[resolution]
-    output_path = output_path_for(source_path, input_dir, output_dir, ".mp4")
+
+    normalized_target_ext = normalize_video_output_ext(target_ext)
+    actual_ext = source_path.suffix.lower() if normalized_target_ext == "original" else normalized_target_ext
+    if actual_ext not in VIDEO_OUTPUT_FORMATS:
+        actual_ext = ".mp4"
+
+    output_path = output_path_for(source_path, input_dir, output_dir, actual_ext)
     if same_file_path(source_path, output_path):
-        output_path = unique_output_path(output_path.with_name(f"{output_path.stem}_compressed{output_path.suffix}"))
+        output_path = unique_output_path(output_path.with_name(f"{output_path.stem}_converted{output_path.suffix}"))
 
     if skip_if_exists and output_path.exists():
         print(f"Skipping existing file: {output_path.name}")
@@ -1205,77 +1580,105 @@ def compress_video(
             progress_callback(progress_index + 1, total_files, source_path, 0)
         return None
 
-    print(f"Compressing video ({preset['label']}, {resolution_preset['label']}): {source_path.name} -> {output_path.name}")
+    format_label = VIDEO_OUTPUT_FORMATS.get(actual_ext, {}).get("label", actual_ext.upper().lstrip("."))
+    print(f"Converting video to {format_label} ({preset['label']}, {resolution_preset['label']}): {source_path.name} -> {output_path.name}")
 
     duration = get_media_duration(source_path)
     temp_path = temp_output_path(output_path)
-    command = [
-        str(ffmpeg_executable()),
-        "-y",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-progress",
-        "pipe:1",
-        "-nostats",
-        "-i",
-        str(source_path),
-        "-map",
-        "0:v:0",
-        "-map",
-        "0:a?",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "medium",
-        "-crf",
-        preset["crf"],
-        "-c:a",
-        "aac",
-        "-b:a",
-        preset["audio_bitrate"],
-        "-movflags",
-        "+faststart",
-    ]
-    if resolution_preset["scale"]:
-        command.extend(["-vf", f"scale={resolution_preset['scale']}:force_original_aspect_ratio=decrease:force_divisible_by=2"])
-    command.append(str(temp_path))
 
-    process = subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        **hidden_subprocess_kwargs(),
-    )
+    def _execute_ffmpeg(cmd):
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            **hidden_subprocess_kwargs(),
+        )
+        last_percent = -1
+        for line in process.stdout:
+            if cancellation_requested(cancel_callback):
+                stop_process(process)
+                remove_partial_output(temp_path)
+                raise CancelledError("Operation canceled")
+            key, separator, value = line.strip().partition("=")
+            if separator != "=" or key != "out_time_ms" or not duration:
+                continue
+            try:
+                elapsed = int(value) / 1_000_000
+            except ValueError:
+                continue
+            percent = max(0, min(99, int((elapsed / duration) * 100)))
+            if progress_callback and percent != last_percent:
+                last_percent = percent
+                progress_callback(progress_index, total_files, source_path, percent)
 
-    last_percent = -1
-    for line in process.stdout:
         if cancellation_requested(cancel_callback):
             stop_process(process)
             remove_partial_output(temp_path)
             raise CancelledError("Operation canceled")
-        key, separator, value = line.strip().partition("=")
-        if separator != "=" or key != "out_time_ms" or not duration:
-            continue
-        try:
-            elapsed = int(value) / 1_000_000
-        except ValueError:
-            continue
-        percent = max(0, min(99, int((elapsed / duration) * 100)))
-        if progress_callback and percent != last_percent:
-            last_percent = percent
-            progress_callback(progress_index, total_files, source_path, percent)
 
-    if cancellation_requested(cancel_callback):
-        stop_process(process)
-        remove_partial_output(temp_path)
-        raise CancelledError("Operation canceled")
+        stderr = process.stderr.read() if process.stderr else ""
+        return_code = process.wait()
+        return return_code, stderr
 
-    stderr = process.stderr.read() if process.stderr else ""
-    return_code = process.wait()
+    used_stream_copy = False
+    return_code = 0
+    stderr = ""
+
+    if compression == "Original" and not resolution_preset["scale"]:
+        info = VIDEO_OUTPUT_FORMATS.get(actual_ext) or VIDEO_OUTPUT_FORMATS[".mp4"]
+        extra = list(info.get("container_args", []))
+        copy_command = [
+            str(ffmpeg_executable()),
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-progress",
+            "pipe:1",
+            "-nostats",
+            "-i",
+            str(source_path),
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a?",
+            "-c",
+            "copy",
+            *extra,
+            str(temp_path),
+        ]
+        return_code, stderr = _execute_ffmpeg(copy_command)
+        if return_code == 0 and validated_media_output(temp_path):
+            used_stream_copy = True
+        else:
+            remove_partial_output(temp_path)
+
+    if not used_stream_copy:
+        command = [
+            str(ffmpeg_executable()),
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-progress",
+            "pipe:1",
+            "-nostats",
+            "-i",
+            str(source_path),
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a?",
+        ]
+        if resolution_preset["scale"]:
+            command.extend(["-vf", f"scale={resolution_preset['scale']}:force_original_aspect_ratio=decrease:force_divisible_by=2"])
+
+        command.extend(ffmpeg_video_args_for(actual_ext, preset))
+        command.append(str(temp_path))
+        return_code, stderr = _execute_ffmpeg(command)
 
     if progress_callback:
         progress_callback(progress_index + 1, total_files, source_path, 0)
@@ -1283,15 +1686,54 @@ def compress_video(
     if return_code != 0:
         if stderr:
             print(stderr.strip())
-        print(f"Video compression failed: {source_path}")
+        print(f"Video conversion failed: {source_path}")
         remove_partial_output(temp_path)
         return None
 
     try:
-        return finalize_output(temp_path, output_path)
+        final_path = finalize_output(temp_path, output_path)
+        if final_path.suffix.lower() == ".mp4":
+            return attach_midpoint_poster(final_path, source_path)
+        return final_path
     except RuntimeError as exc:
         print(exc)
         return None
+
+
+def compress_video(
+    source_path,
+    input_dir=INPUT_DIR,
+    output_dir=OUTPUT_DIR,
+    compression="Original",
+    resolution="Original",
+    skip_if_exists=False,
+    progress_callback=None,
+    progress_index=0,
+    total_files=1,
+    cancel_callback=None,
+    target_ext=".mp4",
+    **kwargs,
+):
+    if "output_ext" in kwargs:
+        target_ext = kwargs.pop("output_ext")
+    if "preset" in kwargs:
+        compression = kwargs.pop("preset")
+    if "cancel_check" in kwargs and cancel_callback is None:
+        cancel_callback = kwargs.pop("cancel_check")
+
+    return convert_video(
+        source_path=source_path,
+        target_ext=target_ext,
+        input_dir=input_dir,
+        output_dir=output_dir,
+        compression=compression,
+        resolution=resolution,
+        skip_if_exists=skip_if_exists,
+        progress_callback=progress_callback,
+        progress_index=progress_index,
+        total_files=total_files,
+        cancel_callback=cancel_callback,
+    )
 
 
 def iter_input_media(input_dir=INPUT_DIR, exclude_dir=None):
@@ -1334,8 +1776,9 @@ def main(
     custom_cover_path=None,
     enhancement="Off",
     video_action="extract_audio",
-    video_compression="Medium",
+    video_compression="Original",
     video_resolution="Original",
+    video_output_ext=".mp4",
     video_only=False,
     cancel_callback=None,
 ):
@@ -1344,6 +1787,7 @@ def main(
     enhancement = normalize_enhancement(enhancement)
     video_compression = normalize_video_compression(video_compression)
     video_resolution = normalize_video_resolution(video_resolution)
+    video_output_ext = normalize_video_output_ext(video_output_ext)
     input_path = Path(input_dir) if input_dir else INPUT_DIR
     input_root = input_root_for(input_path)
     output_dir = Path(output_dir) if output_dir else input_root / "output"
@@ -1351,20 +1795,18 @@ def main(
         input_path.mkdir(exist_ok=True)
     output_dir.mkdir(exist_ok=True)
 
-    if keep_original_format:
+    if video_action in ("convert_video", "compress_video"):
+        v_ext_label = "Keep original" if video_output_ext == "original" else VIDEO_OUTPUT_FORMATS.get(video_output_ext, {}).get("label", video_output_ext)
+        print(f"Video target format: {v_ext_label}")
+        print(f"Video quality: {VIDEO_COMPRESSION_PRESETS[video_compression]['label']}")
+        print(f"Video resolution: {VIDEO_RESOLUTION_PRESETS[video_resolution]['label']}")
+    elif keep_original_format:
         print("Output format: keep original")
-        if video_action == "compress_video":
-            print(f"Video compression: {VIDEO_COMPRESSION_PRESETS[video_compression]['label']}")
-            print(f"Video resolution: {VIDEO_RESOLUTION_PRESETS[video_resolution]['label']}")
-        else:
-            print("Video inputs will still be extracted to the selected audio format")
+        print("Video inputs will still be extracted to the selected audio format")
     else:
         print(f"Output format: {OUTPUT_FORMATS[output_ext]['label']} ({output_ext})")
         if output_ext in {".mp3", ".m4a"}:
             print(f"Quality: {quality}")
-        if video_action == "compress_video":
-            print(f"Video compression: {VIDEO_COMPRESSION_PRESETS[video_compression]['label']}")
-            print(f"Video resolution: {VIDEO_RESOLUTION_PRESETS[video_resolution]['label']}")
     print(f"Input: {input_path}")
     print(f"Output folder: {output_dir}")
     if enhancement != "Off":
@@ -1388,11 +1830,12 @@ def main(
             progress_callback(completed_before_file, total, source_path, 0)
 
         is_video = source_path.suffix.lower() in VIDEO_EXTS
-        if is_video and video_action == "compress_video":
-            output_path = compress_video(
+        if is_video and video_action in ("convert_video", "compress_video"):
+            output_path = convert_video(
                 source_path,
-                input_root,
-                output_dir,
+                target_ext=video_output_ext,
+                input_dir=input_root,
+                output_dir=output_dir,
                 compression=video_compression,
                 resolution=video_resolution,
                 skip_if_exists=skip_if_exists,
@@ -1451,5 +1894,1696 @@ def main(
     print("Done")
 
 
+def format_timestamp_srt(seconds: float) -> str:
+    total_ms = int(round(max(0.0, float(seconds)) * 1000))
+    hours, remainder = divmod(total_ms, 3600000)
+    minutes, remainder = divmod(remainder, 60000)
+    secs, ms = divmod(remainder, 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{ms:03d}"
+
+
+def format_timestamp_vtt(seconds: float) -> str:
+    total_ms = int(round(max(0.0, float(seconds)) * 1000))
+    hours, remainder = divmod(total_ms, 3600000)
+    minutes, remainder = divmod(remainder, 60000)
+    secs, ms = divmod(remainder, 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}.{ms:03d}"
+
+
+def generate_srt_content(segments) -> str:
+    lines = []
+    for idx, seg in enumerate(segments, start=1):
+        start_ts = format_timestamp_srt(seg["start"])
+        end_ts = format_timestamp_srt(seg["end"])
+        text = seg["text"].strip()
+        lines.append(f"{idx}\n{start_ts} --> {end_ts}\n{text}\n")
+    return "\n".join(lines)
+
+
+def generate_vtt_content(segments) -> str:
+    lines = ["WEBVTT\n\n"]
+    for idx, seg in enumerate(segments, start=1):
+        start_ts = format_timestamp_vtt(seg["start"])
+        end_ts = format_timestamp_vtt(seg["end"])
+        text = seg["text"].strip()
+        lines.append(f"{idx}\n{start_ts} --> {end_ts}\n{text}\n")
+    return "\n".join(lines)
+
+
+def generate_txt_content(segments, include_timestamps=False) -> str:
+    if include_timestamps:
+        lines = []
+        for seg in segments:
+            start_ts = format_timestamp_srt(seg["start"])
+            lines.append(f"[{start_ts}] {seg['text'].strip()}")
+        return "\n".join(lines)
+    return "\n".join(seg["text"].strip() for seg in segments if seg["text"].strip())
+
+
+def get_video_dimensions(video_path):
+    """
+    Returns (width, height) of the video file using ffprobe.
+    """
+    try:
+        cmd = [
+            str(ffprobe_executable()),
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=width,height",
+            "-of", "csv=s=x:p=0",
+            str(video_path),
+        ]
+        out = subprocess.check_output(cmd, **hidden_subprocess_kwargs()).decode("utf-8").strip()
+        parts = out.split("x")
+        if len(parts) >= 2:
+            return int(parts[0]), int(parts[1])
+    except Exception:
+        pass
+    return 1920, 1080
+
+
+def split_words_into_subtitles(words, max_words=6, max_duration=2.8, max_pause=0.45):
+    """
+    Groups word-level timestamps into natural, readable subtitle phrases
+    with exact sync (like CapCut auto-captions).
+    """
+    if not words:
+        return []
+    chunks = []
+    cur_words = []
+    cur_start = None
+
+    for w in words:
+        w_text = w.word.strip()
+        if not w_text:
+            continue
+        if cur_start is None:
+            cur_start = w.start
+            cur_words.append(w)
+            continue
+
+        pause = w.start - cur_words[-1].end
+        dur = w.end - cur_start
+        count = len(cur_words)
+
+        should_split = False
+        if count >= max_words or dur >= max_duration:
+            should_split = True
+        elif pause >= max_pause and count >= 2:
+            should_split = True
+        elif cur_words[-1].word.rstrip()[-1:] in (".", "!", "?", "،", "؛") and count >= 3:
+            should_split = True
+
+        if should_split:
+            chunks.append({
+                "start": round(cur_start, 3),
+                "end": round(cur_words[-1].end, 3),
+                "text": " ".join(item.word.strip() for item in cur_words),
+            })
+            cur_words = [w]
+            cur_start = w.start
+        else:
+            cur_words.append(w)
+
+    if cur_words:
+        chunks.append({
+            "start": round(cur_start, 3),
+            "end": round(cur_words[-1].end, 3),
+            "text": " ".join(item.word.strip() for item in cur_words),
+        })
+    return chunks
+
+
+def has_video_stream(media_path):
+    """
+    Checks whether the file has at least one video stream using ffprobe.
+    """
+    if not media_path:
+        return False
+    try:
+        p = Path(media_path).resolve()
+        if not p.is_file():
+            return False
+        cmd = [
+            str(ffprobe_executable()),
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=codec_type",
+            "-of", "csv=p=0",
+            str(p),
+        ]
+        out = subprocess.check_output(cmd, **hidden_subprocess_kwargs()).decode("utf-8").strip()
+        return "video" in out.lower()
+    except Exception:
+        return False
+
+
+def find_matching_video(media_path, hint_path=None):
+    """
+    Finds a video file associated with the given media path (or hint).
+    If media_path is already a video with a video stream, returns it.
+    If media_path is an audio file, searches adjacent and parent folders
+    for a video file with the matching stem (or base stem before _trim_).
+    """
+    if not media_path:
+        return None
+    try:
+        p = Path(media_path).resolve()
+    except Exception:
+        return None
+
+    if p.is_file() and has_video_stream(p):
+        return p
+
+    if hint_path:
+        try:
+            hp = Path(hint_path).resolve()
+            if hp.is_file() and has_video_stream(hp):
+                return hp
+        except Exception:
+            pass
+
+    stem = p.stem
+    base_stem = stem.split("_trim_")[0]
+    search_dirs = [p.parent]
+    if p.parent.parent not in search_dirs:
+        search_dirs.append(p.parent.parent)
+    if p.parent.name.lower() == "output" and p.parent.parent.parent not in search_dirs:
+        search_dirs.append(p.parent.parent.parent)
+
+    # 1. Exact stem video match
+    for d in search_dirs:
+        if not d.is_dir():
+            continue
+        for ext in VIDEO_EXTS:
+            cand = d / f"{stem}{ext}"
+            if cand.is_file() and has_video_stream(cand):
+                return cand
+
+    # 2. Base stem video match (e.g. before _trim_)
+    if base_stem != stem:
+        for d in search_dirs:
+            if not d.is_dir():
+                continue
+            for ext in VIDEO_EXTS:
+                cand = d / f"{base_stem}{ext}"
+                if cand.is_file() and has_video_stream(cand):
+                    return cand
+
+    return None
+
+
+SUBTITLE_COLORS = {
+    "white": "&H00FFFFFF",
+    "yellow": "&H0000FFFF",
+    "cyan": "&H00FFFF00",
+    "lime": "&H0000FF00",
+    "orange": "&H000080FF",
+    "pink": "&H00CBC0FF",
+    "red": "&H000000FF",
+    "black": "&H00000000",
+}
+
+SUBTITLE_OUTLINES = {
+    "thick_black": {"w": 2.8, "sh": 1.5, "c": "&H00000000", "style": 1, "back": "&H80000000"},
+    "medium_black": {"w": 1.8, "sh": 1.0, "c": "&H00000000", "style": 1, "back": "&H80000000"},
+    "thin_black": {"w": 1.0, "sh": 0.0, "c": "&H00000000", "style": 1, "back": "&H80000000"},
+    "thick_white": {"w": 2.5, "sh": 1.0, "c": "&H00FFFFFF", "style": 1, "back": "&H80000000"},
+    "none": {"w": 0.0, "sh": 0.0, "c": "&H00000000", "style": 1, "back": "&H80000000"},
+    "box_semi": {"w": 2.0, "sh": 0.0, "c": "&H00000000", "style": 3, "back": "&H80000000"},
+    "box_dark": {"w": 2.0, "sh": 0.0, "c": "&H00000000", "style": 3, "back": "&H80000000"},
+    "box_black": {"w": 2.0, "sh": 0.0, "c": "&H00000000", "style": 3, "back": "&H00000000"},
+    "box_solid": {"w": 2.0, "sh": 0.0, "c": "&H00000000", "style": 3, "back": "&H00000000"},
+    "box_navy": {"w": 2.0, "sh": 0.0, "c": "&H00000000", "style": 3, "back": "&H40501000"},
+    "box_blue": {"w": 2.0, "sh": 0.0, "c": "&H00000000", "style": 3, "back": "&H60802010"},
+}
+
+SUBTITLE_ALIGNMENTS = {
+    ("bottom", "center"): 2,
+    ("bottom", "left"): 1,
+    ("bottom", "right"): 3,
+    ("middle", "center"): 5,
+    ("middle", "left"): 4,
+    ("middle", "right"): 6,
+    ("top", "center"): 8,
+    ("top", "left"): 7,
+    ("top", "right"): 9,
+}
+
+
+def build_subtitle_style_string(
+    font_name="Segoe UI",
+    font_size=None,
+    text_color="white",
+    outline_style="thick_black",
+    bold=True,
+    italic=False,
+    position_v="bottom",
+    position_h="center",
+    margin_v=None,
+    video_h=1080,
+):
+    if font_size in (None, "", "auto", "Auto"):
+        calc_font_size = max(18, int(video_h * 0.034))
+    else:
+        try:
+            calc_font_size = int(font_size)
+        except Exception:
+            calc_font_size = max(18, int(video_h * 0.034))
+
+    calc_margin_v = margin_v if (margin_v and margin_v != "auto") else max(25, int(video_h * 0.055))
+    try:
+        calc_margin_v = int(calc_margin_v)
+    except Exception:
+        calc_margin_v = 35
+
+    prim_col = SUBTITLE_COLORS.get(text_color, text_color if str(text_color).startswith("&H") else "&H00FFFFFF")
+    out_info = SUBTITLE_OUTLINES.get(outline_style, SUBTITLE_OUTLINES["thick_black"])
+    align_val = SUBTITLE_ALIGNMENTS.get((position_v, position_h), 2)
+    b_val = 1 if bold else 0
+    it_val = 1 if italic else 0
+
+    oc = out_info["c"]
+    ob = out_info["back"]
+    ost = out_info["style"]
+    ow = out_info["w"]
+    osh = out_info["sh"]
+
+    return (
+        f"FontName={font_name},"
+        f"FontSize={calc_font_size},"
+        f"Bold={b_val},"
+        f"Italic={it_val},"
+        f"PrimaryColour={prim_col},"
+        f"OutlineColour={oc},"
+        f"BackColour={ob},"
+        f"BorderStyle={ost},"
+        f"Outline={ow},"
+        f"Shadow={osh},"
+        f"Alignment={align_val},"
+        f"MarginV={calc_margin_v}"
+    )
+
+
+def burn_subtitles_to_video(
+    video_path,
+    srt_path,
+    output_path=None,
+    output_dir=None,
+    font_size=None,
+    font_name="Segoe UI",
+    margin_v=None,
+    style_config=None,
+    cancel_callback=None,
+    progress_callback=None,
+):
+    video_path = Path(video_path).resolve()
+    srt_path = Path(srt_path).resolve()
+
+    if not srt_path.exists():
+        raise FileNotFoundError(f"Subtitle file not found: {srt_path}")
+
+    is_video = has_video_stream(video_path)
+    target_ext = video_path.suffix if (is_video and video_path.suffix.lower() in VIDEO_EXTS) else ".mp4"
+
+    if output_path is None:
+        if output_dir is None:
+            output_dir = video_path.parent / "output"
+        output_dir = Path(output_dir).resolve()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / f"{video_path.stem}_captioned{target_ext}"
+
+    srt_text = srt_path.read_text(encoding="utf-8", errors="ignore").strip()
+    if not srt_text:
+        if is_video:
+            shutil.copy2(video_path, output_path)
+        if progress_callback:
+            try:
+                progress_callback(100, "Subtitle file empty", 0, 0, 0)
+            except Exception:
+                pass
+        return output_path
+
+    # Auto-scale font size and margin according to video resolution
+    if is_video:
+        w, h = get_video_dimensions(video_path)
+    else:
+        w, h = 1920, 1080
+
+    cfg = dict(style_config) if style_config else {}
+    s_font_name = cfg.get("font_name", font_name)
+    s_font_size = cfg.get("font_size", font_size)
+    s_text_color = cfg.get("text_color", "white")
+    s_outline_style = cfg.get("outline_style", "thick_black")
+    s_bold = cfg.get("bold", True)
+    s_italic = cfg.get("italic", False)
+    s_pos_v = cfg.get("position_v", "bottom")
+    s_pos_h = cfg.get("position_h", "center")
+    s_margin_v = cfg.get("margin_v", margin_v)
+
+    style = build_subtitle_style_string(
+        font_name=s_font_name,
+        font_size=s_font_size,
+        text_color=s_text_color,
+        outline_style=s_outline_style,
+        bold=s_bold,
+        italic=s_italic,
+        position_v=s_pos_v,
+        position_h=s_pos_h,
+        margin_v=s_margin_v,
+        video_h=h,
+    )
+
+    temp_path = temp_output_path(output_path)
+    escaped_srt = str(srt_path).replace("\\", "/").replace(":", r"\:")
+    filter_arg = f"subtitles=filename='{escaped_srt}':force_style='{style}'"
+
+    duration = get_media_duration(video_path) or 0
+    if is_video:
+        cmd = [
+            str(ffmpeg_executable()),
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-progress",
+            "pipe:1",
+            "-nostats",
+            "-i",
+            str(video_path),
+            "-vf",
+            filter_arg,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "22",
+            "-c:a",
+            "copy",
+            str(temp_path),
+        ]
+    else:
+        cmd = [
+            str(ffmpeg_executable()),
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-progress",
+            "pipe:1",
+            "-nostats",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c=black:s={w}x{h}:r=30",
+            "-i",
+            str(video_path),
+            "-vf",
+            filter_arg,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "22",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-shortest",
+            str(temp_path),
+        ]
+
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        **hidden_subprocess_kwargs(),
+    )
+
+    for line in process.stdout:
+        if cancellation_requested(cancel_callback):
+            stop_process(process)
+            remove_partial_output(temp_path)
+            raise CancelledError("Operation canceled")
+        key, separator, value = line.strip().partition("=")
+        if separator != "=" or key != "out_time_ms" or not duration:
+            continue
+        try:
+            elapsed = int(value) / 1_000_000
+        except ValueError:
+            continue
+        percent = max(0, min(99, int((elapsed / duration) * 100)))
+        if progress_callback:
+            progress_callback(percent, f"Burning subtitles: {percent}%", elapsed, elapsed, duration)
+
+    if cancellation_requested(cancel_callback):
+        stop_process(process)
+        remove_partial_output(temp_path)
+        raise CancelledError("Operation canceled")
+
+    stderr = process.stderr.read() if process.stderr else ""
+    return_code = process.wait()
+
+    if return_code != 0:
+        remove_partial_output(temp_path)
+        raise RuntimeError(f"FFmpeg subtitle burning failed: {stderr}")
+
+    return finalize_output(temp_path, output_path)
+
+
+def get_whisper_models_dir():
+    local_dir = APP_DIR / "models" / "whisper"
+    if local_dir.is_dir():
+        return local_dir
+    appdata = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or str(Path.home())
+    d = Path(appdata) / "Media Audio Studio" / "models" / "whisper"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def get_whisper_model_status(model_size="base", models_dir=None):
+    """
+    Returns information about the Whisper model:
+    {
+        "model_size": model_size,
+        "is_downloaded": bool,
+        "path": Path or None,
+        "folder": Path,
+        "estimated_mb": float,
+    }
+    """
+    if models_dir is None:
+        models_dir = get_whisper_models_dir()
+    models_dir = Path(models_dir)
+    target_dir = models_dir / model_size
+
+    est_sizes = {
+        "tiny": 75.0,
+        "base": 141.0,
+        "small": 470.0,
+        "medium": 1500.0,
+        "turbo": 1540.0,
+        "large-v3-turbo": 1540.0,
+        "large-v3": 3100.0,
+    }
+    est_mb = est_sizes.get(model_size.lower(), 470.0)
+
+    # 1. Check dedicated models directory
+    if target_dir.is_dir():
+        has_bin = (target_dir / "model.bin").is_file() or (target_dir / "model.safetensors").is_file()
+        has_cfg = (target_dir / "config.json").is_file()
+        if has_bin and has_cfg:
+            return {
+                "model_size": model_size,
+                "is_downloaded": True,
+                "path": target_dir,
+                "folder": models_dir,
+                "estimated_mb": est_mb,
+            }
+
+    # 2. Check standard HuggingFace Hub cache
+    if faster_whisper is not None:
+        try:
+            import faster_whisper.utils as u
+            p = u.download_model(model_size, local_files_only=True)
+            return {
+                "model_size": model_size,
+                "is_downloaded": True,
+                "path": Path(p),
+                "folder": Path(p).parent.parent,
+                "estimated_mb": est_mb,
+            }
+        except Exception:
+            pass
+
+    return {
+        "model_size": model_size,
+        "is_downloaded": False,
+        "path": None,
+        "folder": models_dir,
+        "estimated_mb": est_mb,
+    }
+
+
+_ACTIVE_DOWNLOAD_CONTEXT = {
+    "session": None,
+    "response": None,
+    "aborted": False,
+    "active_sockets": set(),
+}
+
+try:
+    import urllib3.util.connection as _uc
+    _orig_create_conn = _uc.create_connection
+
+    def _tracked_create_conn(*args, **kwargs):
+        sock = _orig_create_conn(*args, **kwargs)
+        _ACTIVE_DOWNLOAD_CONTEXT["active_sockets"].add(sock)
+        return sock
+
+    _uc.create_connection = _tracked_create_conn
+except Exception:
+    pass
+
+
+def abort_whisper_download():
+    """Immediately aborts any active Whisper model download in milliseconds."""
+    _ACTIVE_DOWNLOAD_CONTEXT["aborted"] = True
+    resp = _ACTIVE_DOWNLOAD_CONTEXT.get("response")
+    sess = _ACTIVE_DOWNLOAD_CONTEXT.get("session")
+    if resp is not None:
+        try:
+            resp.close()
+        except Exception:
+            pass
+    if sess is not None:
+        try:
+            sess.close()
+        except Exception:
+            pass
+    for s in list(_ACTIVE_DOWNLOAD_CONTEXT.get("active_sockets", [])):
+        try:
+            import socket
+            s.shutdown(socket.SHUT_RDWR)
+        except Exception:
+            pass
+        try:
+            s.close()
+        except Exception:
+            pass
+    _ACTIVE_DOWNLOAD_CONTEXT["active_sockets"].clear()
+
+
+def format_download_speed(bytes_per_sec):
+    if bytes_per_sec >= 1024 * 1024:
+        return f"{bytes_per_sec / (1024 * 1024):.1f} MB/s"
+    elif bytes_per_sec >= 1024:
+        return f"{bytes_per_sec / 1024:.0f} KB/s"
+    return f"{bytes_per_sec:.0f} B/s"
+
+
+def format_eta_str(bytes_remaining, bytes_per_sec):
+    if bytes_per_sec <= 0 or bytes_remaining <= 0:
+        return ""
+    secs = int(bytes_remaining / bytes_per_sec)
+    mins, s = divmod(secs, 60)
+    hrs, m = divmod(mins, 60)
+    if hrs > 0:
+        return f"{hrs:02d}:{m:02d}:{s:02d}"
+    return f"{m:02d}:{s:02d}"
+
+
+def download_whisper_model(
+    model_size="small",
+    models_dir=None,
+    progress_callback=None,
+    cancel_callback=None,
+    **kwargs,
+):
+    """
+    Downloads a faster-whisper model with:
+    - Multi-CDN / mirror fallback (hf-mirror.com and huggingface.co)
+    - Resumable partial downloads (.part files)
+    - Sub-second instant cancellation (< 0.1s response)
+    - Real-time progress with Speed (KB/s or MB/s) and ETA (minutes:seconds)
+    """
+    import time
+    import requests
+
+    if "cancel_check" in kwargs and cancel_callback is None:
+        cancel_callback = kwargs.pop("cancel_check")
+
+    if models_dir is None:
+        models_dir = get_whisper_models_dir()
+    models_dir = Path(models_dir)
+    target_dir = models_dir / model_size
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    status = get_whisper_model_status(model_size, models_dir)
+    if status["is_downloaded"] and status["path"]:
+        if progress_callback:
+            try:
+                progress_callback(100, 0, 0, "Ready", "0 KB/s", "", status["path"])
+            except Exception:
+                pass
+        return status["path"]
+
+    _ACTIVE_DOWNLOAD_CONTEXT["aborted"] = False
+
+    import faster_whisper.utils as u
+    repo_id = u._MODELS.get(model_size)
+    if not repo_id:
+        if model_size in ("turbo", "large-v3-turbo"):
+            repo_id = "mobiuslabsgmbh/faster-whisper-large-v3-turbo"
+        else:
+            repo_id = f"Systran/faster-whisper-{model_size}"
+
+    FALLBACK_MODEL_FILES = {
+        "tiny": [
+            ("config.json", 2249),
+            ("vocabulary.txt", 459861),
+            ("tokenizer.json", 2203239),
+            ("model.bin", 75538270),
+        ],
+        "base": [
+            ("config.json", 2261),
+            ("vocabulary.txt", 459861),
+            ("tokenizer.json", 2203239),
+            ("model.bin", 145214124),
+        ],
+        "small": [
+            ("config.json", 2261),
+            ("vocabulary.txt", 459861),
+            ("tokenizer.json", 2203239),
+            ("model.bin", 483546902),
+        ],
+        "turbo": [
+            ("config.json", 2263),
+            ("preprocessor_config.json", 340),
+            ("vocabulary.json", 1068114),
+            ("tokenizer.json", 2710337),
+            ("model.bin", 1617884929),
+        ],
+        "large-v3-turbo": [
+            ("config.json", 2263),
+            ("preprocessor_config.json", 340),
+            ("vocabulary.json", 1068114),
+            ("tokenizer.json", 2710337),
+            ("model.bin", 1617884929),
+        ],
+        "medium": [
+            ("config.json", 2261),
+            ("vocabulary.txt", 459861),
+            ("tokenizer.json", 2203239),
+            ("model.bin", 1528448882),
+        ],
+    }
+
+    files_to_download = FALLBACK_MODEL_FILES.get(model_size.lower())
+    if not files_to_download:
+        try:
+            import huggingface_hub
+            api = huggingface_hub.HfApi()
+            inf = api.model_info(repo_id, files_metadata=True, timeout=4)
+            needed_names = {
+                "config.json", "preprocessor_config.json", "model.bin",
+                "model.safetensors", "tokenizer.json", "vocabulary.txt", "vocabulary.json"
+            }
+            files_to_download = [(s.rfilename, s.size or 0) for s in inf.siblings if s.rfilename in needed_names]
+        except Exception:
+            files_to_download = [
+                ("config.json", 2300),
+                ("tokenizer.json", 2200000),
+                ("vocabulary.txt", 460000),
+                ("model.bin", int(status["estimated_mb"] * 1024 * 1024)),
+            ]
+
+    total_expected_bytes = sum(size for _, size in files_to_download if size)
+
+    downloaded_overall = 0
+    pending_files = []
+    for filename, expected_size in files_to_download:
+        dest_file = target_dir / filename
+        if dest_file.exists() and expected_size > 0 and dest_file.stat().st_size == expected_size:
+            downloaded_overall += expected_size
+        else:
+            pending_files.append((filename, expected_size))
+
+    if not pending_files:
+        if progress_callback:
+            try:
+                progress_callback(100, total_expected_bytes, total_expected_bytes, "Complete", "0 KB/s", "", target_dir)
+            except Exception:
+                pass
+        return target_dir
+
+    start_time = time.time()
+    last_report_time = start_time
+    speed_calc_window = []
+
+    session = requests.Session()
+    _ACTIVE_DOWNLOAD_CONTEXT["session"] = session
+
+    base_mirrors = [
+        f"https://hf-mirror.com/{repo_id}/resolve/main/",
+        f"https://huggingface.co/{repo_id}/resolve/main/",
+    ]
+
+    try:
+        for filename, expected_size in pending_files:
+            if _ACTIVE_DOWNLOAD_CONTEXT["aborted"] or cancellation_requested(cancel_callback):
+                raise CancelledError("Model download canceled")
+
+            dest_file = target_dir / filename
+            part_file = target_dir / f"{filename}.part"
+
+            existing_bytes = part_file.stat().st_size if part_file.exists() else 0
+            if expected_size and existing_bytes > expected_size:
+                existing_bytes = 0
+
+            response = None
+            for base_url in base_mirrors:
+                if _ACTIVE_DOWNLOAD_CONTEXT["aborted"] or cancellation_requested(cancel_callback):
+                    raise CancelledError("Model download canceled")
+
+                file_url = base_url + filename
+                headers = {"User-Agent": "Mozilla/5.0"}
+                if existing_bytes > 0:
+                    headers["Range"] = f"bytes={existing_bytes}-"
+
+                try:
+                    resp = session.get(file_url, stream=True, headers=headers, timeout=(4.0, 15.0))
+                    if resp.status_code == 416:
+                        if expected_size and existing_bytes >= expected_size:
+                            response = resp
+                            break
+                    if resp.status_code in (200, 206):
+                        response = resp
+                        _ACTIVE_DOWNLOAD_CONTEXT["response"] = resp
+                        break
+                    else:
+                        resp.close()
+                except Exception:
+                    continue
+
+            if response is None:
+                raise RuntimeError(f"Failed to connect to download mirror for {filename}")
+
+            if response.status_code == 200:
+                existing_bytes = 0
+                write_mode = "wb"
+            elif response.status_code == 206:
+                write_mode = "ab"
+            else:
+                write_mode = "ab"
+
+            cur_file_dl = existing_bytes
+            with open(part_file, write_mode) as out_f:
+                for chunk in response.iter_content(chunk_size=65536):
+                    if _ACTIVE_DOWNLOAD_CONTEXT["aborted"] or cancellation_requested(cancel_callback):
+                        response.close()
+                        raise CancelledError("Model download canceled")
+
+                    if chunk:
+                        out_f.write(chunk)
+                        chunk_len = len(chunk)
+                        cur_file_dl += chunk_len
+
+                        now = time.time()
+                        speed_calc_window.append((now, chunk_len))
+                        while speed_calc_window and now - speed_calc_window[0][0] > 3.0:
+                            speed_calc_window.pop(0)
+
+                        if now - last_report_time >= 0.25:
+                            total_now = downloaded_overall + cur_file_dl
+                            pct = min(99, int((total_now / max(total_expected_bytes, 1)) * 100))
+
+                            win_time = max(now - speed_calc_window[0][0], 0.1) if speed_calc_window else 1.0
+                            win_bytes = sum(b for _, b in speed_calc_window)
+                            speed_bps = win_bytes / win_time
+                            speed_str = format_download_speed(speed_bps)
+
+                            rem_bytes = max(total_expected_bytes - total_now, 0)
+                            eta_str = format_eta_str(rem_bytes, speed_bps)
+
+                            last_report_time = now
+                            if progress_callback:
+                                try:
+                                    progress_callback(
+                                        pct,
+                                        total_now,
+                                        total_expected_bytes,
+                                        filename,
+                                        speed_str,
+                                        eta_str,
+                                        target_dir,
+                                    )
+                                except Exception:
+                                    pass
+
+            response.close()
+
+            if _ACTIVE_DOWNLOAD_CONTEXT["aborted"] or cancellation_requested(cancel_callback):
+                raise CancelledError("Model download canceled")
+
+            if part_file.exists():
+                if dest_file.exists():
+                    try:
+                        dest_file.unlink()
+                    except Exception:
+                        pass
+                part_file.rename(dest_file)
+                downloaded_overall += dest_file.stat().st_size
+
+        if progress_callback:
+            try:
+                progress_callback(100, total_expected_bytes, total_expected_bytes, "Complete", "0 KB/s", "", target_dir)
+            except Exception:
+                pass
+
+        return target_dir
+
+    finally:
+        session.close()
+        _ACTIVE_DOWNLOAD_CONTEXT["response"] = None
+        _ACTIVE_DOWNLOAD_CONTEXT["session"] = None
+        _ACTIVE_DOWNLOAD_CONTEXT["active_sockets"].clear()
+
+
+def translate_segments(segments, target_lang="ar", batch_size=20, cancel_callback=None):
+    """
+    Translates transcript segments into target_lang using online neural translation.
+    Keeps segment timestamps intact. Returns translated copy of segments.
+    """
+    if not segments or not target_lang or target_lang in ("none", "same", "auto"):
+        return segments
+
+    import urllib.request
+    import urllib.parse
+    import json
+
+    translated_segments = []
+    total = len(segments)
+
+    for i in range(0, total, batch_size):
+        if cancellation_requested(cancel_callback):
+            raise CancelledError("Translation canceled")
+
+        chunk = segments[i : i + batch_size]
+        text_lines = [s.get("text", "") for s in chunk]
+        joined = " \n \n ".join(text_lines)
+        url = (
+            f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={urllib.parse.quote(target_lang)}&dt=t&q="
+            + urllib.parse.quote(joined)
+        )
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        try:
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            full_trans = "".join(c[0] for c in data[0] if c and c[0])
+            trans_lines = [l.strip() for l in full_trans.split("\n") if l.strip()]
+            for idx, orig_seg in enumerate(chunk):
+                t_text = trans_lines[idx] if idx < len(trans_lines) else orig_seg.get("text", "")
+                translated_segments.append({
+                    "start": orig_seg["start"],
+                    "end": orig_seg["end"],
+                    "text": t_text,
+                })
+        except Exception as exc:
+            print(f"Translation batch failed ({exc}), preserving original text")
+            translated_segments.extend(chunk)
+
+    return translated_segments
+
+
+def transcribe_media(
+    source_path,
+    output_dir=None,
+    model_size="small",
+    language=None,
+    task="transcribe",
+    translate_to=None,
+    export_srt=True,
+    export_vtt=True,
+    export_txt=True,
+    burn_to_video=False,
+    style_config=None,
+    models_dir=None,
+    vad_filter=True,
+    condition_on_previous_text=True,
+    repetition_penalty=1.0,
+    no_repeat_ngram_size=0,
+    initial_prompt=None,
+    progress_callback=None,
+    cancel_callback=None,
+    **kwargs,
+):
+    """
+    Transcribes an audio or video file to text using faster-whisper.
+    Applies Silero VAD filtering, anti-hallucination safeguards, and optional subtitle translation (like CapCut/NoteGPT).
+    Generates .srt, .vtt, and .txt files.
+    Optionally burns subtitles into video.
+    """
+    if "cancel_check" in kwargs and cancel_callback is None:
+        cancel_callback = kwargs.pop("cancel_check")
+
+    if not whisper_available():
+        raise RuntimeError(
+            "faster-whisper is not installed. Please run: py -3.12 -m pip install faster-whisper"
+        )
+
+    source_path = Path(source_path).resolve()
+    if not source_path.exists():
+        raise FileNotFoundError(f"File not found: {source_path}")
+
+    if output_dir is None:
+        output_dir = source_path.parent / "output"
+    output_dir = Path(output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if cancellation_requested(cancel_callback):
+        raise CancelledError("Operation canceled")
+
+    media_duration = get_media_duration(source_path) or 0
+
+    device = "cpu"
+    compute_type = "int8"
+    try:
+        import ctranslate2
+        import ctypes
+        if ctranslate2.get_cuda_device_count() > 0:
+            can_cuda = False
+            for dll in ["cublas64_12.dll", "cublas64_11.dll"]:
+                try:
+                    ctypes.CDLL(dll)
+                    can_cuda = True
+                    break
+                except Exception:
+                    pass
+            if can_cuda:
+                supported = ctranslate2.get_supported_compute_types("cuda")
+                if "float16" in supported:
+                    device = "cuda"
+                    compute_type = "float16"
+                elif "int8_float16" in supported:
+                    device = "cuda"
+                    compute_type = "int8_float16"
+                elif "int8" in supported:
+                    device = "cuda"
+                    compute_type = "int8"
+    except Exception:
+        pass
+
+    # Ensure model is downloaded with real-time download progress
+    status = get_whisper_model_status(model_size, models_dir)
+    if not status["is_downloaded"]:
+        def _model_dl_cb(pct, dl_bytes, tot_bytes, cur_file, speed, *extra):
+            dl_mb = dl_bytes / (1024 * 1024)
+            tot_mb = tot_bytes / (1024 * 1024)
+            eta = extra[0] if extra else ""
+            eta_part = f" - ETA: {eta}" if eta else ""
+            msg = f"Downloading AI model '{model_size}' ({dl_mb:.1f} / {tot_mb:.1f} MB - {pct}%) [{speed}{eta_part}]"
+            if progress_callback:
+                try:
+                    progress_callback(pct, msg, 0, 0, media_duration)
+                except Exception:
+                    pass
+
+        model_path = download_whisper_model(
+            model_size=model_size,
+            models_dir=models_dir,
+            progress_callback=_model_dl_cb,
+            cancel_callback=cancel_callback,
+        )
+    else:
+        model_path = status["path"]
+
+    if cancellation_requested(cancel_callback):
+        raise CancelledError("Operation canceled")
+
+    if progress_callback:
+        progress_callback(
+            0,
+            f"Loading Whisper model '{model_size}'...",
+            0,
+            0,
+            media_duration,
+        )
+
+    target_lang = None if (not language or language == "auto") else language
+
+    if initial_prompt is None:
+        if target_lang == "ar":
+            initial_prompt = (
+                "بسم الله الرحمن الرحيم. السلام عليكم ورحمة الله وبركاته. "
+                "صلى الله عليه وسلم، إن شاء الله، الحمد لله رب العالمين. "
+                "تفريغ دقيق باللغة العربية الفصحى والعامية: يعني، مين، إيه، علشان، النهاردة، زي كده."
+            )
+        elif target_lang == "en":
+            initial_prompt = "Hello and welcome. This is a clear English transcription with proper punctuation and natural sentences."
+        else:
+            initial_prompt = "بسم الله الرحمن الرحيم. Hello. Accurate transcription with proper punctuation."
+
+    vad_params = dict(
+        min_silence_duration_ms=1000,
+        threshold=0.45,
+        min_speech_duration_ms=250,
+        speech_pad_ms=400,
+    )
+
+    if progress_callback:
+        progress_callback(
+            2,
+            "Transcribing audio...",
+            0,
+            0,
+            media_duration,
+        )
+
+    transcribe_source = str(source_path)
+    try:
+        import numpy as np
+        extract_cmd = [
+            str(ffmpeg_executable()),
+            "-nostdin",
+            "-threads", "0",
+            "-i", str(source_path),
+            "-f", "s16le",
+            "-ac", "1",
+            "-acodec", "pcm_s16le",
+            "-ar", "16000",
+            "-",
+        ]
+        out_bytes = subprocess.check_output(extract_cmd, stderr=subprocess.DEVNULL, **hidden_subprocess_kwargs())
+        if len(out_bytes) > 1000:
+            transcribe_source = np.frombuffer(out_bytes, np.int16).flatten().astype(np.float32) / 32768.0
+    except Exception:
+        transcribe_source = str(source_path)
+
+    try:
+        whisper_model = faster_whisper.WhisperModel(
+            str(model_path),
+            device=device,
+            compute_type=compute_type,
+        )
+        segments_gen, info = whisper_model.transcribe(
+            transcribe_source,
+            language=target_lang,
+            task=task,
+            beam_size=5,
+            best_of=5,
+            temperature=0.0,
+            word_timestamps=True,
+            vad_filter=vad_filter,
+            vad_parameters=vad_params,
+            condition_on_previous_text=condition_on_previous_text,
+            repetition_penalty=repetition_penalty,
+            no_repeat_ngram_size=no_repeat_ngram_size,
+            compression_ratio_threshold=2.4,
+            hallucination_silence_threshold=None,
+            initial_prompt=initial_prompt,
+        )
+        detected_lang = info.language
+        segments = []
+        for seg in segments_gen:
+            if cancellation_requested(cancel_callback):
+                raise CancelledError("Operation canceled")
+            if hasattr(seg, "words") and seg.words:
+                sub_chunks = split_words_into_subtitles(seg.words)
+            else:
+                sub_chunks = [{
+                    "start": round(seg.start, 3),
+                    "end": round(seg.end, 3),
+                    "text": seg.text.strip(),
+                }]
+            for ch in sub_chunks:
+                if not ch["text"]:
+                    continue
+                segments.append(ch)
+                if media_duration > 0:
+                    pct = min(90, max(2, int((ch["end"] / media_duration) * 100)))
+                else:
+                    pct = min(90, len(segments) * 3)
+                if progress_callback:
+                    progress_callback(pct, ch["text"], ch["start"], ch["end"], media_duration)
+    except Exception as exc:
+        if device != "cpu":
+            print(f"CUDA transcription failed ({exc}), falling back to CPU int8...")
+            whisper_model = faster_whisper.WhisperModel(
+                str(model_path),
+                device="cpu",
+                compute_type="int8",
+            )
+            segments_gen, info = whisper_model.transcribe(
+                transcribe_source,
+                language=target_lang,
+                task=task,
+                beam_size=5,
+                best_of=5,
+                temperature=0.0,
+                word_timestamps=True,
+                vad_filter=vad_filter,
+                vad_parameters=vad_params,
+                condition_on_previous_text=condition_on_previous_text,
+                repetition_penalty=repetition_penalty,
+                no_repeat_ngram_size=no_repeat_ngram_size,
+                compression_ratio_threshold=2.4,
+                hallucination_silence_threshold=None,
+                initial_prompt=initial_prompt,
+            )
+            detected_lang = info.language
+            segments = []
+            for seg in segments_gen:
+                if cancellation_requested(cancel_callback):
+                    raise CancelledError("Operation canceled")
+                if hasattr(seg, "words") and seg.words:
+                    sub_chunks = split_words_into_subtitles(seg.words)
+                else:
+                    sub_chunks = [{
+                        "start": round(seg.start, 3),
+                        "end": round(seg.end, 3),
+                        "text": seg.text.strip(),
+                    }]
+                for ch in sub_chunks:
+                    if not ch["text"]:
+                        continue
+                    segments.append(ch)
+                    if media_duration > 0:
+                        pct = min(90, max(2, int((ch["end"] / media_duration) * 100)))
+                    else:
+                        pct = min(90, len(segments) * 3)
+                    if progress_callback:
+                        progress_callback(pct, ch["text"], ch["start"], ch["end"], media_duration)
+        else:
+            raise
+
+    # Subtitle translation if requested (like CapCut/NoteGPT)
+    if translate_to and translate_to not in ("none", "same", "auto", detected_lang, target_lang):
+        if progress_callback:
+            progress_callback(
+                92,
+                f"Translating subtitles to {translate_to}...",
+                media_duration,
+                media_duration,
+                media_duration,
+            )
+        segments = translate_segments(segments, target_lang=translate_to, cancel_callback=cancel_callback)
+
+    srt_path = output_dir / f"{source_path.stem}.srt"
+    vtt_path = output_dir / f"{source_path.stem}.vtt"
+    txt_path = output_dir / f"{source_path.stem}.txt"
+
+    srt_content = generate_srt_content(segments)
+    vtt_content = generate_vtt_content(segments)
+    txt_content = generate_txt_content(segments)
+
+    if export_srt:
+        srt_path.write_text(srt_content, encoding="utf-8")
+    if export_vtt:
+        vtt_path.write_text(vtt_content, encoding="utf-8")
+    if export_txt:
+        txt_path.write_text(txt_content, encoding="utf-8")
+
+    captioned_video_path = None
+    if burn_to_video and source_path.suffix.lower() in VIDEO_EXTS:
+        if progress_callback:
+            progress_callback(
+                95,
+                "Burning subtitles into video...",
+                0,
+                media_duration,
+                media_duration,
+            )
+        captioned_video_path = burn_subtitles_to_video(
+            video_path=source_path,
+            srt_path=srt_path,
+            output_dir=output_dir,
+            style_config=style_config,
+            cancel_callback=cancel_callback,
+        )
+
+    if progress_callback:
+        progress_callback(
+            100,
+            "Transcription completed!",
+            media_duration,
+            media_duration,
+            media_duration,
+        )
+
+    return {
+        "text": txt_content,
+        "segments": segments,
+        "language": detected_lang,
+        "translated_to": translate_to,
+        "srt_path": srt_path if export_srt else None,
+        "vtt_path": vtt_path if export_vtt else None,
+        "txt_path": txt_path if export_txt else None,
+        "video_path": captioned_video_path,
+    }
+
+
+def get_capcut_drafts():
+    """
+    Returns detected CapCut desktop drafts on the user's PC.
+    Each item: {'id', 'name', 'date', 'path', 'subtitle_count'}
+    """
+    import os, json, datetime
+    base = os.path.expandvars(r'%LOCALAPPDATA%\CapCut\User Data\Projects\com.lveditor.draft')
+    drafts = []
+    if not os.path.exists(base):
+        return drafts
+    try:
+        for name in os.listdir(base):
+            p = os.path.join(base, name, "draft_content.json")
+            if os.path.exists(p):
+                try:
+                    mtime = os.path.getmtime(p)
+                    dt = datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
+                    with open(p, "r", encoding="utf-8") as f:
+                        d = json.load(f)
+                    proj_name = d.get("name") or name
+                    texts = {t["id"] for t in d.get("materials", {}).get("texts", []) if "id" in t}
+                    count = sum(
+                        1
+                        for track in d.get("tracks", [])
+                        for seg in track.get("segments", [])
+                        if seg.get("material_id") in texts
+                    )
+                    drafts.append({
+                        "id": name,
+                        "name": proj_name,
+                        "date": dt,
+                        "mtime": mtime,
+                        "path": p,
+                        "subtitle_count": count,
+                    })
+                except Exception:
+                    pass
+        drafts.sort(key=lambda x: x.get("mtime", 0), reverse=True)
+    except Exception:
+        pass
+    return drafts
+
+
+def extract_subtitles_from_capcut(draft_path, output_dir=None, export_srt=True, export_vtt=True, export_txt=True):
+    """
+    Extracts high-precision captions from a CapCut draft.
+    Returns dict compatible with transcribe_media:
+    {'segments', 'text', 'srt_path', 'vtt_path', 'txt_path', 'language'}
+    """
+    import json
+    draft_path = Path(draft_path)
+    if not draft_path.exists():
+        raise FileNotFoundError(f"CapCut draft not found: {draft_path}")
+
+    with open(draft_path, "r", encoding="utf-8") as f:
+        d = json.load(f)
+
+    materials = d.get("materials", {})
+    texts = {}
+    for t in materials.get("texts", []):
+        if "id" in t:
+            try:
+                content = json.loads(t.get("content", "{}"))
+                texts[t["id"]] = content.get("text", "")
+            except Exception:
+                pass
+
+    segments = []
+    for track in d.get("tracks", []):
+        for seg in track.get("segments", []):
+            mid = seg.get("material_id")
+            if mid in texts and texts[mid].strip():
+                tr = seg.get("target_timerange", {})
+                st = tr.get("start", 0) / 1000000.0
+                du = tr.get("duration", 0) / 1000000.0
+                segments.append({
+                    "start": round(st, 3),
+                    "end": round(st + du, 3),
+                    "text": texts[mid].strip(),
+                })
+    segments.sort(key=lambda x: x["start"])
+
+    txt_content = " ".join(s["text"] for s in segments)
+
+    if output_dir is None:
+        output_dir = draft_path.parent
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    base_name = d.get("name") or draft_path.parent.name
+    srt_path = output_dir / f"{base_name}.srt"
+    vtt_path = output_dir / f"{base_name}.vtt"
+    txt_path = output_dir / f"{base_name}.txt"
+
+    if export_srt:
+        srt_content = generate_srt_content(segments)
+        srt_path.write_text(srt_content, encoding="utf-8-sig")
+    if export_vtt:
+        vtt_content = generate_vtt_content(segments)
+        vtt_path.write_text(vtt_content, encoding="utf-8-sig")
+    if export_txt:
+        txt_path.write_text(txt_content, encoding="utf-8-sig")
+
+    # Detect associated media file (video or audio)
+    media_path = None
+    for v in materials.get("videos", []):
+        vp = v.get("path")
+        if vp:
+            v_cand = Path(vp)
+            if v_cand.exists() and v_cand.suffix.lower() in VIDEO_EXTS:
+                media_path = v_cand
+                break
+    if not media_path:
+        for a in materials.get("audios", []):
+            ap = a.get("path")
+            if ap:
+                a_cand = Path(ap)
+                if a_cand.exists():
+                    stem = a_cand.stem.split("_trim_")[0]
+                    for p in [a_cand.parent, a_cand.parent.parent, a_cand.parent.parent.parent]:
+                        try:
+                            found = list(p.glob(f"{stem}*.mp4"))
+                            if found:
+                                media_path = found[0]
+                                break
+                        except Exception:
+                            pass
+                    if not media_path:
+                        media_path = a_cand
+                    break
+
+    return {
+        "text": txt_content,
+        "segments": segments,
+        "language": "ar",
+        "srt_path": srt_path if export_srt else None,
+        "vtt_path": vtt_path if export_vtt else None,
+        "txt_path": txt_path if export_txt else None,
+        "video_path": media_path,
+    }
+
+
+def batch_transcribe_media(
+    media_files,
+    output_dir,
+    model_size="small",
+    language=None,
+    translate_to=None,
+    export_srt=True,
+    export_vtt=True,
+    export_txt=True,
+    burn_to_video=False,
+    skip_if_exists=True,
+    progress_callback=None,
+    cancel_callback=None,
+    **kwargs,
+):
+    if "cancel_check" in kwargs and cancel_callback is None:
+        cancel_callback = kwargs.pop("cancel_check")
+    total = len(media_files)
+    results = []
+
+    for index, media_path in enumerate(media_files):
+        if cancellation_requested(cancel_callback):
+            raise CancelledError("Operation canceled")
+
+        srt_expected = output_dir / f"{media_path.stem}.srt"
+        if skip_if_exists and srt_expected.exists():
+            print(f"Skipping existing transcription: {srt_expected.name}")
+            if progress_callback:
+                try:
+                    progress_callback(index + 1, total, media_path, 100, f"Skipped: {media_path.name}")
+                except Exception:
+                    pass
+            continue
+
+        print(f"Transcribing [{index + 1}/{total}]: {media_path.name}")
+
+        def file_progress(pct, text, start, end, dur):
+            if progress_callback:
+                try:
+                    progress_callback(index, total, media_path, pct, text)
+                except Exception:
+                    pass
+
+        res = transcribe_media(
+            source_path=media_path,
+            output_dir=output_dir,
+            model_size=model_size,
+            language=language,
+            translate_to=translate_to,
+            export_srt=export_srt,
+            export_vtt=export_vtt,
+            export_txt=export_txt,
+            burn_to_video=burn_to_video,
+            progress_callback=file_progress,
+            cancel_callback=cancel_callback,
+            **kwargs,
+        )
+        results.append(res)
+        if progress_callback:
+            try:
+                progress_callback(index + 1, total, media_path, 100, f"Finished: {media_path.name}")
+            except Exception:
+                pass
+
+    return results
+
+
+def detect_audio_volume(source_path):
+    """
+    Detects the audio volume levels (max volume in dB and mean volume in dB)
+    using FFmpeg's volumedetect filter.
+    Returns dict: {'max_volume': float, 'mean_volume': float, 'suggested_gain': float}
+    """
+    source_path = Path(source_path).resolve()
+    if not source_path.exists():
+        raise FileNotFoundError(f"File not found: {source_path}")
+
+    cmd = [
+        str(ffmpeg_executable()),
+        "-hide_banner",
+        "-i",
+        str(source_path),
+        "-af",
+        "volumedetect",
+        "-f",
+        "null",
+        "-",
+    ]
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        **hidden_subprocess_kwargs(),
+    )
+    _, stderr = process.communicate()
+
+    max_match = re.search(r"max_volume:\s*([-\d\.]+)\s*dB", stderr)
+    mean_match = re.search(r"mean_volume:\s*([-\d\.]+)\s*dB", stderr)
+
+    max_vol = float(max_match.group(1)) if max_match else 0.0
+    mean_vol = float(mean_match.group(1)) if mean_match else 0.0
+    suggested_gain = max(0.0, -max_vol)
+
+    return {
+        "max_volume": max_vol,
+        "mean_volume": mean_vol,
+        "suggested_gain": round(suggested_gain, 1),
+    }
+
+
+def boost_audio_volume(
+    source_path,
+    gain_db=6.0,
+    output_dir=None,
+    output_ext=None,
+    anti_clipping=True,
+    normalize_peak=False,
+    quality="192k",
+    progress_callback=None,
+    cancel_callback=None,
+    **kwargs,
+):
+    """
+    Boosts the volume of an audio or video file and saves it with the new higher volume.
+    If source is video, video track is copied without re-encoding (-c:v copy).
+    """
+    if "anti_clip" in kwargs:
+        anti_clipping = kwargs.pop("anti_clip")
+    if "output_format" in kwargs:
+        output_ext = kwargs.pop("output_format")
+    if "cancel_check" in kwargs and cancel_callback is None:
+        cancel_callback = kwargs.pop("cancel_check")
+
+    source_path = Path(source_path).resolve()
+    if not source_path.exists():
+        raise FileNotFoundError(f"File not found: {source_path}")
+
+    if output_dir is None:
+        output_dir = source_path.parent / "output"
+    output_dir = Path(output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if cancellation_requested(cancel_callback):
+        raise CancelledError("Operation canceled")
+
+    actual_gain = max(0.0, float(gain_db))
+    if normalize_peak:
+        try:
+            stats = detect_audio_volume(source_path)
+            actual_gain = stats["suggested_gain"]
+        except Exception:
+            pass
+
+    is_video = source_path.suffix.lower() in VIDEO_EXTS
+
+    filter_parts = [f"volume={actual_gain:.1f}dB"]
+    if anti_clipping:
+        filter_parts.append("alimiter=limit=0.98")
+    af_string = ",".join(filter_parts)
+
+    if output_ext is None or output_ext.lower() == "original":
+        target_ext = source_path.suffix.lower()
+    else:
+        target_ext = output_ext.lower() if output_ext.startswith(".") else f".{output_ext.lower()}"
+
+    output_path = output_dir / f"{source_path.stem}_boosted{target_ext}"
+    if same_file_path(source_path, output_path):
+        output_path = unique_output_path(output_dir / f"{source_path.stem}_louder{target_ext}")
+
+    temp_path = temp_output_path(output_path)
+    duration = get_media_duration(source_path) or 0
+
+    cmd = [
+        str(ffmpeg_executable()),
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-progress",
+        "pipe:1",
+        "-nostats",
+        "-i",
+        str(source_path),
+    ]
+
+    if is_video:
+        cmd.extend([
+            "-c:v", "copy",
+            "-af", af_string,
+            "-c:a", "aac",
+            "-b:a", quality if quality in QUALITY_OPTIONS else "192k",
+        ])
+    else:
+        cmd.extend(["-af", af_string])
+        if target_ext in OUTPUT_FORMATS:
+            cmd.extend(ffmpeg_args_for(target_ext, quality))
+        else:
+            cmd.extend(["-codec:a", "libmp3lame", "-b:a", quality if quality in QUALITY_OPTIONS else "192k"])
+
+    cmd.append(str(temp_path))
+
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        **hidden_subprocess_kwargs(),
+    )
+
+    for line in process.stdout:
+        if cancellation_requested(cancel_callback):
+            stop_process(process)
+            remove_partial_output(temp_path)
+            raise CancelledError("Operation canceled")
+        key, separator, value = line.strip().partition("=")
+        if separator != "=" or key != "out_time_ms" or not duration:
+            continue
+        try:
+            elapsed = int(value) / 1_000_000
+        except ValueError:
+            continue
+        percent = max(0, min(99, int((elapsed / duration) * 100)))
+        if progress_callback:
+            try:
+                progress_callback(percent, f"Boosting volume: {percent}%", elapsed, duration)
+            except Exception:
+                pass
+
+    if cancellation_requested(cancel_callback):
+        stop_process(process)
+        remove_partial_output(temp_path)
+        raise CancelledError("Operation canceled")
+
+    stderr = process.stderr.read() if process.stderr else ""
+    return_code = process.wait()
+
+    if return_code != 0:
+        remove_partial_output(temp_path)
+        raise RuntimeError(f"FFmpeg volume boost failed: {stderr}")
+
+    final_path = finalize_output(temp_path, output_path)
+    if progress_callback:
+        try:
+            progress_callback(100, "Volume boost completed!", duration, duration)
+        except Exception:
+            pass
+    return final_path
+
+
+def batch_boost_volume(
+    media_files,
+    output_dir,
+    gain_db=6.0,
+    output_ext=None,
+    anti_clipping=True,
+    normalize_peak=False,
+    quality="192k",
+    progress_callback=None,
+    cancel_callback=None,
+    **kwargs,
+):
+    if "anti_clip" in kwargs:
+        anti_clipping = kwargs.pop("anti_clip")
+    if "output_format" in kwargs:
+        output_ext = kwargs.pop("output_format")
+    if "cancel_check" in kwargs and cancel_callback is None:
+        cancel_callback = kwargs.pop("cancel_check")
+
+    total = len(media_files)
+    results = []
+
+    for index, media_path in enumerate(media_files):
+        if cancellation_requested(cancel_callback):
+            raise CancelledError("Operation canceled")
+
+        def _file_prog(pct, msg, cur, dur):
+            if progress_callback:
+                try:
+                    progress_callback(index, total, media_path, pct, msg)
+                except TypeError:
+                    try:
+                        progress_callback(index, total, media_path)
+                    except TypeError:
+                        progress_callback(pct, msg)
+
+        res = boost_audio_volume(
+            source_path=media_path,
+            gain_db=gain_db,
+            output_dir=output_dir,
+            output_ext=output_ext,
+            anti_clipping=anti_clipping,
+            normalize_peak=normalize_peak,
+            quality=quality,
+            progress_callback=_file_prog,
+            cancel_callback=cancel_callback,
+        )
+        results.append(res)
+        if progress_callback:
+            try:
+                progress_callback(index + 1, total, media_path, 100, f"Finished: {media_path.name}")
+            except TypeError:
+                try:
+                    progress_callback(index + 1, total, media_path)
+                except TypeError:
+                    pass
+
+    return results
+
+
 if __name__ == "__main__":
     main()
+

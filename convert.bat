@@ -1,11 +1,14 @@
 @echo off
 cd /d "%~dp0"
-if exist "%~dp0dist\MediaAudioStudio\MediaAudioStudio.exe" (
-    start "" "%~dp0dist\MediaAudioStudio\MediaAudioStudio.exe"
-) else if exist "%~dp0dist\MediaAudioStudio.exe" (
-    start "" "%~dp0dist\MediaAudioStudio.exe"
-) else if exist "%~dp0dist\SongCoverTool.exe" (
-    start "" "%~dp0dist\SongCoverTool.exe"
-) else (
-    python gui.py
+py -3.12 gui.py
+if %errorlevel% equ 0 exit /b
+if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" (
+    "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" gui.py
+    if %errorlevel% equ 0 exit /b
+)
+python gui.py
+if %errorlevel% neq 0 (
+    echo.
+    echo Failed to run Media Audio Studio.
+    pause
 )

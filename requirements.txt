@@ -4,3 +4,4 @@ pillow
 pyinstaller
 python-vlc
 yt-dlp
+faster-whisper
