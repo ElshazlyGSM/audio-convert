@@ -13,6 +13,8 @@ import shutil
 import subprocess
 import sys
 import os
+import threading
+import time
 from io import BytesIO
 from pathlib import Path
 from urllib.parse import quote, urlparse
@@ -50,6 +52,8 @@ folder = Path.cwd()
 APP_DIR = Path(__file__).parent.resolve()
 INPUT_DIR = folder / "input"
 OUTPUT_DIR = folder / "output"
+CACHE_DIR = APP_DIR / ".cache"
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
 REFRESH_EXISTING_COVERS = False
 AUDIO_EXTS = {".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg", ".opus", ".wma"}
 VIDEO_EXTS = {
@@ -872,19 +876,62 @@ def ffmpeg_filter_args(enhancement):
     return ["-af", ",".join(filters)]
 
 
+def ffmpeg_audio_filter_str(enhancement):
+    filters = ENHANCEMENT_PRESETS[normalize_enhancement(enhancement)]
+    return ",".join(filters) if filters else None
+
+
 def cancellation_requested(cancel_callback):
     return bool(cancel_callback and cancel_callback())
+
+
+_ACTIVE_SUBPROCESSES = set()
+_ACTIVE_SUBPROCESSES_LOCK = threading.Lock()
+
+
+def register_active_process(proc):
+    if proc:
+        with _ACTIVE_SUBPROCESSES_LOCK:
+            _ACTIVE_SUBPROCESSES.add(proc)
+
+
+def unregister_active_process(proc):
+    if proc:
+        with _ACTIVE_SUBPROCESSES_LOCK:
+            _ACTIVE_SUBPROCESSES.discard(proc)
+
+
+def stop_all_active_processes():
+    with _ACTIVE_SUBPROCESSES_LOCK:
+        procs = list(_ACTIVE_SUBPROCESSES)
+        _ACTIVE_SUBPROCESSES.clear()
+    for proc in procs:
+        try:
+            stop_process(proc)
+        except Exception:
+            pass
+
+
+register_process = register_active_process
+unregister_process = unregister_active_process
+stop_all_processes = stop_all_active_processes
 
 
 def stop_process(process):
     if not process or process.poll() is not None:
         return
-    process.terminate()
     try:
-        process.wait(timeout=2)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=2)
+        process.terminate()
+    except Exception:
+        pass
+    try:
+        process.wait(timeout=1.0)
+    except (subprocess.TimeoutExpired, Exception):
+        try:
+            process.kill()
+            process.wait(timeout=1.0)
+        except Exception:
+            pass
 
 
 def remove_partial_output(output_path):
@@ -991,8 +1038,25 @@ def finalize_output(temp_path, final_path):
         remove_partial_output(temp_path)
         raise RuntimeError(f"Output file is not a valid media file: {final_path.name}")
     final_path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path.replace(final_path)
-    return final_path
+    try:
+        temp_path.replace(final_path)
+        return final_path
+    except (PermissionError, OSError):
+        # Target file might be locked by another process (e.g. VLC player, Windows Explorer preview)
+        # Wait briefly and retry, otherwise write to a new unique filename
+        time.sleep(0.3)
+        try:
+            temp_path.replace(final_path)
+            return final_path
+        except (PermissionError, OSError):
+            alt_path = unique_output_path(final_path)
+            try:
+                temp_path.replace(alt_path)
+                return alt_path
+            except Exception:
+                shutil.copy2(temp_path, alt_path)
+                remove_partial_output(temp_path)
+                return alt_path
 
 
 def attach_midpoint_poster(video_path, source_path=None, timestamp=None):
@@ -1314,6 +1378,18 @@ def trim_media(
     quality="192k",
     keep_original_format=True,
     enhancement="Off",
+    aspect_ratio="original",
+    fit_mode="crop",
+    video_transform=None,
+    media_overlays=None,
+    logo_items=None,
+    color_config=None,
+    transitions_config=None,
+    logo_config=None,
+    title_config=None,
+    subtitle_config=None,
+    silence_config=None,
+    video_quality="High",
     progress_callback=None,
     cancel_callback=None,
 ):
@@ -1346,6 +1422,56 @@ def trim_media(
     )
     output_path = unique_output_path(base_output.with_name(trim_name))
     trim_duration = end_seconds - start_seconds
+
+    vt = video_transform or {}
+    has_vt = (
+        abs(float(vt.get("zoom", 1.0) or 1.0) - 1.0) > 0.005
+        or abs(float(vt.get("pan_x", 0.0) or 0.0)) > 0.002
+        or abs(float(vt.get("pan_y", 0.0) or 0.0)) > 0.002
+        or bool(vt.get("flip_h", False))
+    )
+
+    # If user requested aspect ratio changes (e.g. 9:16 Reels), pan/zoom, color grading, icons/images, logo, title, subtitles, or silence removal:
+    if keep_original_format and has_video_stream(source_path):
+        is_styled = bool(
+            (aspect_ratio and aspect_ratio != "original")
+            or has_vt
+            or bool(media_overlays)
+            or bool(logo_items)
+            or (color_config and color_config.get("enabled"))
+            or (transitions_config and transitions_config.get("enabled"))
+            or (logo_config and logo_config.get("enabled"))
+            or (title_config and (title_config.get("enabled") or bool(title_config.get("text_items"))))
+            or (subtitle_config and subtitle_config.get("enabled"))
+            or (silence_config and silence_config.get("enabled"))
+        )
+        if is_styled:
+            def _styled_prog(pct, cur, tot):
+                if progress_callback:
+                    progress_callback(0, 1, source_path, pct)
+
+            return export_styled_video(
+                video_path=source_path,
+                output_path=output_path,
+                start_seconds=start_seconds,
+                duration_seconds=trim_duration,
+                aspect_ratio=aspect_ratio,
+                fit_mode=fit_mode,
+                video_transform=video_transform,
+                media_overlays=media_overlays,
+                logo_items=logo_items,
+                color_config=color_config,
+                transitions_config=transitions_config,
+                logo_config=logo_config,
+                title_config=title_config,
+                subtitle_config=subtitle_config,
+                silence_config=silence_config,
+                audio_enhancement_filter=ffmpeg_audio_filter_str(enhancement),
+                video_quality=video_quality,
+                ffmpeg_exe=str(ffmpeg_executable()),
+                cancel_callback=cancel_callback,
+                progress_callback=_styled_prog,
+            )
 
     action = "Trimming" if keep_original_format else "Trimming and extracting audio"
     print(f"{action} {source_path.name} -> {output_path.name}")
@@ -1942,21 +2068,45 @@ def generate_txt_content(segments, include_timestamps=False) -> str:
 
 def get_video_dimensions(video_path):
     """
-    Returns (width, height) of the video file using ffprobe.
+    Returns (width, height) of the video file using ffprobe, accounting for display rotation metadata.
     """
     try:
+        import json
+
         cmd = [
             str(ffprobe_executable()),
             "-v", "error",
             "-select_streams", "v:0",
-            "-show_entries", "stream=width,height",
-            "-of", "csv=s=x:p=0",
+            "-show_entries", "stream=width,height:stream_side_data=rotation:stream_tags=rotate",
+            "-of", "json",
             str(video_path),
         ]
         out = subprocess.check_output(cmd, **hidden_subprocess_kwargs()).decode("utf-8").strip()
-        parts = out.split("x")
-        if len(parts) >= 2:
-            return int(parts[0]), int(parts[1])
+        if out:
+            data = json.loads(out)
+            streams = data.get("streams", [])
+            if streams:
+                s = streams[0]
+                w = int(s.get("width", 1920))
+                h = int(s.get("height", 1080))
+                rot = 0
+                for sd in s.get("side_data_list", []):
+                    if "rotation" in sd:
+                        try:
+                            rot = int(round(float(sd["rotation"])))
+                            break
+                        except (ValueError, TypeError):
+                            pass
+                if rot == 0 and "tags" in s:
+                    tag_rot = s["tags"].get("rotate")
+                    if tag_rot is not None:
+                        try:
+                            rot = int(round(float(tag_rot)))
+                        except (ValueError, TypeError):
+                            pass
+                if abs(rot) in (90, 270):
+                    w, h = h, w
+                return w, h
     except Exception:
         pass
     return 1920, 1080
@@ -2093,96 +2243,34 @@ def find_matching_video(media_path, hint_path=None):
     return None
 
 
-SUBTITLE_COLORS = {
-    "white": "&H00FFFFFF",
-    "yellow": "&H0000FFFF",
-    "cyan": "&H00FFFF00",
-    "lime": "&H0000FF00",
-    "orange": "&H000080FF",
-    "pink": "&H00CBC0FF",
-    "red": "&H000000FF",
-    "black": "&H00000000",
-}
-
-SUBTITLE_OUTLINES = {
-    "thick_black": {"w": 2.8, "sh": 1.5, "c": "&H00000000", "style": 1, "back": "&H80000000"},
-    "medium_black": {"w": 1.8, "sh": 1.0, "c": "&H00000000", "style": 1, "back": "&H80000000"},
-    "thin_black": {"w": 1.0, "sh": 0.0, "c": "&H00000000", "style": 1, "back": "&H80000000"},
-    "thick_white": {"w": 2.5, "sh": 1.0, "c": "&H00FFFFFF", "style": 1, "back": "&H80000000"},
-    "none": {"w": 0.0, "sh": 0.0, "c": "&H00000000", "style": 1, "back": "&H80000000"},
-    "box_semi": {"w": 2.0, "sh": 0.0, "c": "&H00000000", "style": 3, "back": "&H80000000"},
-    "box_dark": {"w": 2.0, "sh": 0.0, "c": "&H00000000", "style": 3, "back": "&H80000000"},
-    "box_black": {"w": 2.0, "sh": 0.0, "c": "&H00000000", "style": 3, "back": "&H00000000"},
-    "box_solid": {"w": 2.0, "sh": 0.0, "c": "&H00000000", "style": 3, "back": "&H00000000"},
-    "box_navy": {"w": 2.0, "sh": 0.0, "c": "&H00000000", "style": 3, "back": "&H40501000"},
-    "box_blue": {"w": 2.0, "sh": 0.0, "c": "&H00000000", "style": 3, "back": "&H60802010"},
-}
-
-SUBTITLE_ALIGNMENTS = {
-    ("bottom", "center"): 2,
-    ("bottom", "left"): 1,
-    ("bottom", "right"): 3,
-    ("middle", "center"): 5,
-    ("middle", "left"): 4,
-    ("middle", "right"): 6,
-    ("top", "center"): 8,
-    ("top", "left"): 7,
-    ("top", "right"): 9,
-}
-
-
-def build_subtitle_style_string(
-    font_name="Segoe UI",
-    font_size=None,
-    text_color="white",
-    outline_style="thick_black",
-    bold=True,
-    italic=False,
-    position_v="bottom",
-    position_h="center",
-    margin_v=None,
-    video_h=1080,
-):
-    if font_size in (None, "", "auto", "Auto"):
-        calc_font_size = max(18, int(video_h * 0.034))
-    else:
-        try:
-            calc_font_size = int(font_size)
-        except Exception:
-            calc_font_size = max(18, int(video_h * 0.034))
-
-    calc_margin_v = margin_v if (margin_v and margin_v != "auto") else max(25, int(video_h * 0.055))
-    try:
-        calc_margin_v = int(calc_margin_v)
-    except Exception:
-        calc_margin_v = 35
-
-    prim_col = SUBTITLE_COLORS.get(text_color, text_color if str(text_color).startswith("&H") else "&H00FFFFFF")
-    out_info = SUBTITLE_OUTLINES.get(outline_style, SUBTITLE_OUTLINES["thick_black"])
-    align_val = SUBTITLE_ALIGNMENTS.get((position_v, position_h), 2)
-    b_val = 1 if bold else 0
-    it_val = 1 if italic else 0
-
-    oc = out_info["c"]
-    ob = out_info["back"]
-    ost = out_info["style"]
-    ow = out_info["w"]
-    osh = out_info["sh"]
-
-    return (
-        f"FontName={font_name},"
-        f"FontSize={calc_font_size},"
-        f"Bold={b_val},"
-        f"Italic={it_val},"
-        f"PrimaryColour={prim_col},"
-        f"OutlineColour={oc},"
-        f"BackColour={ob},"
-        f"BorderStyle={ost},"
-        f"Outline={ow},"
-        f"Shadow={osh},"
-        f"Alignment={align_val},"
-        f"MarginV={calc_margin_v}"
-    )
+from video_studio import (
+    ASPECT_RATIOS,
+    FIT_MODES,
+    build_aspect_ratio_filter,
+    get_aspect_ratio_dimensions,
+    SUBTITLE_COLORS,
+    SUBTITLE_OUTLINES,
+    SUBTITLE_ALIGNMENTS,
+    build_subtitle_style_string,
+    LOGO_POSITIONS,
+    BANNER_POSITIONS,
+    BANNER_BG_COLORS,
+    BANNER_TEXT_COLORS,
+    generate_title_banner_image,
+    build_logo_overlay_filter,
+    build_title_banner_filter,
+    build_composite_video_filter,
+    export_styled_video,
+    SILENCE_PRESETS,
+    SILENCE_MODES,
+    detect_silences,
+    compute_speech_segments,
+    summarize_silence_analysis,
+    remap_subtitles_for_cuts,
+    parse_and_remap_srt_file,
+    build_silence_filter_expressions,
+    export_silence_cut_media,
+)
 
 
 def burn_subtitles_to_video(
@@ -2211,7 +2299,7 @@ def burn_subtitles_to_video(
             output_dir = video_path.parent / "output"
         output_dir = Path(output_dir).resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / f"{video_path.stem}_captioned{target_ext}"
+        output_path = unique_output_path(output_dir / f"{video_path.stem}_captioned{target_ext}")
 
     srt_text = srt_path.read_text(encoding="utf-8", errors="ignore").strip()
     if not srt_text:
@@ -2271,6 +2359,10 @@ def burn_subtitles_to_video(
             "-nostats",
             "-i",
             str(video_path),
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a?",
             "-vf",
             filter_arg,
             "-c:v",
@@ -2280,7 +2372,9 @@ def burn_subtitles_to_video(
             "-crf",
             "22",
             "-c:a",
-            "copy",
+            "aac",
+            "-b:a",
+            "192k",
             str(temp_path),
         ]
     else:
@@ -3337,7 +3431,7 @@ def batch_transcribe_media(
     return results
 
 
-def detect_audio_volume(source_path):
+def detect_audio_volume(source_path, sample_seconds=180):
     """
     Detects the audio volume levels (max volume in dB and mean volume in dB)
     using FFmpeg's volumedetect filter.
@@ -3350,6 +3444,13 @@ def detect_audio_volume(source_path):
     cmd = [
         str(ffmpeg_executable()),
         "-hide_banner",
+        "-vn",
+        "-sn",
+        "-dn",
+    ]
+    if sample_seconds and float(sample_seconds) > 0:
+        cmd.extend(["-t", str(float(sample_seconds))])
+    cmd.extend([
         "-i",
         str(source_path),
         "-af",
@@ -3357,7 +3458,7 @@ def detect_audio_volume(source_path):
         "-f",
         "null",
         "-",
-    ]
+    ])
     process = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
@@ -3383,6 +3484,22 @@ def detect_audio_volume(source_path):
     }
 
 
+def auto_suggest_silence_threshold(source_path):
+    """
+    Analyzes audio levels of `source_path` and suggests an optimal silence threshold in dB.
+    """
+    vol = detect_audio_volume(source_path)
+    mean_db = vol.get("mean_volume", -20.0)
+    max_db = vol.get("max_volume", 0.0)
+    # Typical speech mean is ~10-14 dB above background silence floor
+    suggested = round(max(-50.0, min(-22.0, mean_db - 10.0)), 1)
+    return {
+        "suggested_noise_db": suggested,
+        "mean_volume": mean_db,
+        "max_volume": max_db,
+    }
+
+
 def boost_audio_volume(
     source_path,
     gain_db=6.0,
@@ -3391,12 +3508,16 @@ def boost_audio_volume(
     anti_clipping=True,
     normalize_peak=False,
     quality="192k",
+    enhancement="Off",
+    fade_in_sec=0.0,
+    fade_out_sec=0.0,
     progress_callback=None,
     cancel_callback=None,
     **kwargs,
 ):
     """
-    Boosts the volume of an audio or video file and saves it with the new higher volume.
+    Boosts the volume of an audio or video file, optionally applying audio enhancement
+    and fade-in/fade-out, and saves it with the new higher volume.
     If source is video, video track is copied without re-encoding (-c:v copy).
     """
     if "anti_clip" in kwargs:
@@ -3418,7 +3539,7 @@ def boost_audio_volume(
     if cancellation_requested(cancel_callback):
         raise CancelledError("Operation canceled")
 
-    actual_gain = max(0.0, float(gain_db))
+    actual_gain = float(gain_db)
     if normalize_peak:
         try:
             stats = detect_audio_volume(source_path)
@@ -3427,13 +3548,24 @@ def boost_audio_volume(
             pass
 
     is_video = source_path.suffix.lower() in VIDEO_EXTS
+    duration = get_media_duration(source_path) or 0
 
-    filter_parts = [f"volume={actual_gain:.1f}dB"]
+    filter_parts = []
+    enh_str = ffmpeg_audio_filter_str(enhancement)
+    if enh_str:
+        filter_parts.append(enh_str)
+    if abs(actual_gain) >= 0.05 or not filter_parts:
+        filter_parts.append(f"volume={actual_gain:.1f}dB")
     if anti_clipping:
         filter_parts.append("alimiter=limit=0.98")
+    if fade_in_sec and float(fade_in_sec) > 0:
+        filter_parts.append(f"afade=t=in:st=0:d={float(fade_in_sec):.2f}")
+    if fade_out_sec and float(fade_out_sec) > 0 and duration > float(fade_out_sec):
+        st_out = max(0.0, duration - float(fade_out_sec))
+        filter_parts.append(f"afade=t=out:st={st_out:.2f}:d={float(fade_out_sec):.2f}")
     af_string = ",".join(filter_parts)
 
-    if output_ext is None or output_ext.lower() == "original":
+    if output_ext is None or output_ext.lower() in ("original", "auto"):
         target_ext = source_path.suffix.lower()
     else:
         target_ext = output_ext.lower() if output_ext.startswith(".") else f".{output_ext.lower()}"
@@ -3443,7 +3575,6 @@ def boost_audio_volume(
         output_path = unique_output_path(output_dir / f"{source_path.stem}_louder{target_ext}")
 
     temp_path = temp_output_path(output_path)
-    duration = get_media_duration(source_path) or 0
 
     cmd = [
         str(ffmpeg_executable()),
@@ -3458,7 +3589,7 @@ def boost_audio_volume(
         str(source_path),
     ]
 
-    if is_video:
+    if is_video and target_ext in VIDEO_EXTS:
         cmd.extend([
             "-c:v", "copy",
             "-af", af_string,
@@ -3466,7 +3597,7 @@ def boost_audio_volume(
             "-b:a", quality if quality in QUALITY_OPTIONS else "192k",
         ])
     else:
-        cmd.extend(["-af", af_string])
+        cmd.extend(["-vn", "-af", af_string])
         if target_ext in OUTPUT_FORMATS:
             cmd.extend(ffmpeg_args_for(target_ext, quality))
         else:
@@ -3532,6 +3663,9 @@ def batch_boost_volume(
     anti_clipping=True,
     normalize_peak=False,
     quality="192k",
+    enhancement="Off",
+    fade_in_sec=0.0,
+    fade_out_sec=0.0,
     progress_callback=None,
     cancel_callback=None,
     **kwargs,
@@ -3568,6 +3702,9 @@ def batch_boost_volume(
             anti_clipping=anti_clipping,
             normalize_peak=normalize_peak,
             quality=quality,
+            enhancement=enhancement,
+            fade_in_sec=fade_in_sec,
+            fade_out_sec=fade_out_sec,
             progress_callback=_file_prog,
             cancel_callback=cancel_callback,
         )
@@ -3584,6 +3721,105 @@ def batch_boost_volume(
     return results
 
 
+def batch_export_silence_cut(
+    media_files,
+    output_dir,
+    noise_db=-35.0,
+    min_silence_sec=0.5,
+    padding_sec=0.15,
+    mode="remove",
+    speed_factor=4,
+    enhancement="Off",
+    video_quality="High",
+    chosen_ext=None,
+    is_audio_only=False,
+    progress_callback=None,
+    cancel_callback=None,
+):
+    total = len(media_files)
+    results = []
+    enh_filter = ffmpeg_audio_filter_str(enhancement)
+    ffmpeg_bin = str(ffmpeg_executable())
+
+    for index, media_path in enumerate(media_files):
+        if cancellation_requested(cancel_callback):
+            raise CancelledError("Operation canceled")
+
+        media_path = Path(media_path)
+        is_vid = False if is_audio_only else (has_video_stream(media_path) or (media_path.suffix.lower() in VIDEO_EXTS))
+
+        def _file_prog(pct, cur_s, tot_s):
+            if progress_callback:
+                try:
+                    progress_callback(index, total, media_path, pct)
+                except Exception:
+                    pass
+
+        tag = "nosilence" if mode == "remove" else ("fastsilence" if mode == "fast_forward" else "gated")
+        out_ext = chosen_ext if chosen_ext else media_path.suffix
+        out_p = unique_output_path(Path(output_dir) / f"{media_path.stem}_{tag}{out_ext}")
+
+        res = export_silence_cut_media(
+            media_path=media_path,
+            output_path=out_p,
+            output_dir=output_dir,
+            keep_intervals=None,
+            noise_db=noise_db,
+            min_silence_sec=min_silence_sec,
+            padding_sec=padding_sec,
+            mode=mode,
+            speed_factor=speed_factor,
+            audio_enhancement_filter=enh_filter,
+            video_quality=video_quality,
+            has_video=is_vid,
+            ffmpeg_exe=ffmpeg_bin,
+            cancel_callback=cancel_callback,
+            progress_callback=_file_prog,
+        )
+        results.append(res)
+        if progress_callback:
+            try:
+                progress_callback(index + 1, total, media_path, 100)
+            except Exception:
+                pass
+
+    return results
+
+
+def capture_video_snapshot(video_path, timestamp_sec=0.0, output_dir=None, color_config=None):
+    """
+    Extracts a high-resolution PNG snapshot from `video_path` at `timestamp_sec`,
+    optionally applying color grading adjustments.
+    """
+    from video_studio.color_grading import extract_video_sample_frame, apply_color_to_image, is_color_neutral
+
+    video_path = Path(video_path).resolve()
+    if output_dir is None:
+        output_dir = video_path.parent / "output"
+    output_dir = Path(output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    ts = max(0.0, float(timestamp_sec or 0.0))
+    ts_label = format_time_label(ts)
+    out_png = unique_output_path(output_dir / f"{video_path.stem}_snapshot_{ts_label}.png")
+
+    img = extract_video_sample_frame(
+        video_path=video_path,
+        timestamp=ts,
+        max_size=(3840, 2160),
+        ffmpeg_exe=str(ffmpeg_executable()),
+    )
+    if img is None:
+        raise RuntimeError("Could not extract video frame at the selected timestamp.")
+
+    if color_config and isinstance(color_config, dict) and color_config.get("enabled") and not is_color_neutral(color_config):
+        img = apply_color_to_image(img, color_config)
+
+    img.save(str(out_png), "PNG")
+    return out_png
+
+
 if __name__ == "__main__":
     main()
+
 
