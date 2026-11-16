@@ -192,11 +192,22 @@ class SilenceWorkflowMixin:
         )
         self.silence_deselect_all_btn.pack(side="left", padx=(0, 16))
 
-        # Blue summary text showing detected count & saved time
+        # Main summary label (count of detected silences / status hint)
         self.silence_summary_label = ttk.Label(
             list_toolbar, textvariable=self.silence_summary_var, font=("Segoe UI", 9, "bold"), foreground="#0066cc"
         )
-        self.silence_summary_label.pack(side="left", fill="x", expand=True)
+        self.silence_summary_label.pack(side="left", padx=(0, 10))
+
+        # Time range and saved badges - separate widgets guarantee zero BiDi collisions
+        self.silence_time_badge = ttk.Label(
+            list_toolbar, font=("Segoe UI", 9, "bold"), foreground="#2da44e"
+        )
+        self.silence_time_badge.pack(side="left", padx=(0, 10))
+
+        self.silence_saved_badge = ttk.Label(
+            list_toolbar, font=("Segoe UI", 9, "bold"), foreground="#b08800"
+        )
+        self.silence_saved_badge.pack(side="left", padx=(0, 10))
 
         # Scrollable List Frame
         list_frame = ttk.Frame(list_box)
@@ -269,6 +280,10 @@ class SilenceWorkflowMixin:
 
         if not self.silence_analysis_result:
             self.silence_summary_var.set(self.text("silence_ready_hint"))
+            if hasattr(self, "silence_time_badge"):
+                self.silence_time_badge.configure(text="")
+            if hasattr(self, "silence_saved_badge"):
+                self.silence_saved_badge.configure(text="")
         else:
             self._recalculate_silence_summary()
 
@@ -340,6 +355,10 @@ class SilenceWorkflowMixin:
 
         self._begin_operation("silence_detect", self.silence_analyze_button)
         self.silence_summary_var.set(self.text("silence_analyzing"))
+        if hasattr(self, "silence_time_badge"):
+            self.silence_time_badge.configure(text="")
+        if hasattr(self, "silence_saved_badge"):
+            self.silence_saved_badge.configure(text="")
         self.status_var.set(self.text("silence_analyzing"))
         self._set_busy(True)
         self.progress.configure(mode="determinate", maximum=100, value=0)
@@ -404,7 +423,12 @@ class SilenceWorkflowMixin:
             try:
                 msg = self.text("silence_none_found", db=f"{noise_db:.1f}")
             except Exception:
-                msg = f"No silences detected at {noise_db:.1f} dB"
+                msg = f"لم يتم العثور على سكتات عند حد {noise_db:.1f} dB"
+            self.silence_summary_var.set(msg)
+            if hasattr(self, "silence_time_badge"):
+                self.silence_time_badge.configure(text="")
+            if hasattr(self, "silence_saved_badge"):
+                self.silence_saved_badge.configure(text="")
         else:
             count = stats.get("silence_count", stats.get("count", len(silences)))
             orig_str = self._format_time(tot_dur)
@@ -412,19 +436,27 @@ class SilenceWorkflowMixin:
             new_str = self._format_time(new_dur)
             saved_sec = stats.get("saved_seconds", stats.get("saved_duration", 0.0))
             pct_val = stats.get("saved_percent", 0.0)
-            try:
-                msg = self.text(
-                    "silence_summary_fmt",
-                    count=count,
-                    orig=orig_str,
-                    new=new_str,
-                    saved=f"{saved_sec:.1f}s",
-                    pct=f"{pct_val:.1f}",
-                )
-            except Exception:
-                msg = f"✅ Found {count} silences | Saved: {saved_sec:.1f}s ({pct_val:.1f}%)"
-
-        self.silence_summary_var.set(msg)
+            is_ar = (getattr(self, "language_var", None) and self.language_var.get() == "العربية")
+            if is_ar:
+                self.silence_summary_var.set(f"✅ تم اكتشاف {count} سكتة")
+                if hasattr(self, "silence_time_badge"):
+                    self.silence_time_badge.configure(text=f"⏱️ المدة: [{orig_str}  ➔  {new_str}]")
+                if hasattr(self, "silence_saved_badge"):
+                    if saved_sec < 60:
+                        saved_str = f"{saved_sec:.1f} ثانية"
+                    else:
+                        saved_str = f"{int(saved_sec // 60)} د و {int(saved_sec % 60)} ث"
+                    self.silence_saved_badge.configure(text=f"⚡ تم توفير: {saved_str} ({pct_val:.1f}%)")
+            else:
+                self.silence_summary_var.set(f"✅ Found {count} silences")
+                if hasattr(self, "silence_time_badge"):
+                    self.silence_time_badge.configure(text=f"⏱️ Duration: [{orig_str} ➔ {new_str}]")
+                if hasattr(self, "silence_saved_badge"):
+                    if saved_sec < 60:
+                        saved_str = f"{saved_sec:.1f}s"
+                    else:
+                        saved_str = f"{int(saved_sec // 60)}m {int(saved_sec % 60)}s"
+                    self.silence_saved_badge.configure(text=f"⚡ Saved: {saved_str} ({pct_val:.1f}%)")
         if hasattr(self, "davinci_timeline"):
             try:
                 self.davinci_timeline.silence_intervals = silences
@@ -460,10 +492,10 @@ class SilenceWorkflowMixin:
             return
 
         silences = self.silence_analysis_result["silences"]
+        is_ar = (getattr(self, "language_var", None) and self.language_var.get() == "العربية")
         for idx, s_item in enumerate(silences):
             row = ttk.Frame(self.silence_list_inner, padding=(8, 4))
             row.pack(fill="x", padx=4, pady=2)
-            row.columnconfigure(1, weight=1)
 
             var = tk.BooleanVar(value=bool(s_item.get("enabled", True)))
             self.silence_row_vars.append((s_item, var))
@@ -474,17 +506,30 @@ class SilenceWorkflowMixin:
                 variable=var,
                 command=lambda item=s_item, v=var: self._on_silence_item_toggled(item, v),
             )
-            chk.grid(row=0, column=0, padx=(0, 10), sticky="w")
+            chk.pack(side="left", padx=(0, 10))
 
-            info_txt = self.text(
-                "silence_item_label",
-                idx=s_item.get("index", idx + 1),
-                start=f"{self._format_time(s_item['start'])}.{int((s_item['start'] % 1) * 10)}",
-                end=f"{self._format_time(s_item['end'])}.{int((s_item['end'] % 1) * 10)}",
-                dur=f"{s_item['duration']:.2f}",
+            idx_num = s_item.get("index", idx + 1)
+            lbl_idx = ttk.Label(row, text=f"#{idx_num}", font=("Consolas", 9, "bold"), width=5)
+            lbl_idx.pack(side="left", padx=(0, 8))
+
+            st_str = f"{self._format_time(s_item['start'])}.{int((s_item['start'] % 1) * 10)}"
+            en_str = f"{self._format_time(s_item['end'])}.{int((s_item['end'] % 1) * 10)}"
+            lbl_time = ttk.Label(
+                row,
+                text=f"[{st_str}  ➔  {en_str}]",
+                font=("Consolas", 9, "bold"),
+                foreground="#3b82f6",
             )
-            lbl = ttk.Label(row, text=info_txt, font=("Consolas", 9, "bold"))
-            lbl.grid(row=0, column=1, sticky="w")
+            lbl_time.pack(side="left", padx=(0, 14))
+
+            dur_val = s_item.get("duration", 0.0)
+            unit_str = "ثانية" if is_ar else "s"
+            lbl_dur = ttk.Label(
+                row,
+                text=f"({dur_val:.2f} {unit_str})",
+                font=("Segoe UI", 9, "bold"),
+            )
+            lbl_dur.pack(side="left", padx=(0, 10))
 
             play_btn = ttk.Button(
                 row,
@@ -492,7 +537,7 @@ class SilenceWorkflowMixin:
                 command=lambda st=max(0.0, s_item["start"] - 0.8), en=s_item["end"] + 0.8: self._play_bubble_segment(st, en),
                 style="Player.TButton",
             )
-            play_btn.grid(row=0, column=2, padx=(8, 0), sticky="e")
+            play_btn.pack(side="right", padx=(8, 4))
 
         self._draw_silence_timeline_canvas()
 

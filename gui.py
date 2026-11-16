@@ -1461,6 +1461,10 @@ class SongCoverApp(
                 self.silence_noise_display.configure(foreground="#ff7b72")
             if hasattr(self, "silence_summary_label"):
                 self.silence_summary_label.configure(foreground="#58a6ff")
+            if hasattr(self, "silence_time_badge"):
+                self.silence_time_badge.configure(foreground="#3fb950")
+            if hasattr(self, "silence_saved_badge"):
+                self.silence_saved_badge.configure(foreground="#d29922")
             if hasattr(self, "caption_models_dir_path_label"):
                 self.caption_models_dir_path_label.configure(foreground=muted_fg)
             if hasattr(self, "caption_status_label"):
@@ -1535,6 +1539,10 @@ class SongCoverApp(
                 self.silence_noise_display.configure(foreground="#cc3300")
             if hasattr(self, "silence_summary_label"):
                 self.silence_summary_label.configure(foreground="#0066cc")
+            if hasattr(self, "silence_time_badge"):
+                self.silence_time_badge.configure(foreground="#2da44e")
+            if hasattr(self, "silence_saved_badge"):
+                self.silence_saved_badge.configure(foreground="#b08800")
             if hasattr(self, "caption_models_dir_path_label"):
                 self.caption_models_dir_path_label.configure(foreground="#555555")
             if hasattr(self, "caption_status_label"):
