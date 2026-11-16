@@ -903,13 +903,21 @@ class ActivationDialog(tk.Toplevel):
         self.clipboard_clear()
         self.clipboard_append(hwid)
         msg = "✅ تم نسخ كود الجهاز إلى الحافظة بنجاح!" if self.is_ar else "✅ Hardware ID copied to clipboard!"
-        self.lbl_msg.configure(text=msg, fg="#3fb950")
+        if hasattr(self, "lbl_msg") and self.lbl_msg.winfo_exists():
+            try:
+                self.lbl_msg.configure(text=msg, fg="#3fb950")
+            except Exception:
+                pass
 
     def _copy_email(self):
         self.clipboard_clear()
         self.clipboard_append("Elshazly.gsm@gmail.com")
-        self.btn_copy_email.configure(text="تم النسخ!" if self.is_ar else "Copied!")
-        self.after(2000, lambda: self.btn_copy_email.configure(text="نسخ الإيميل" if self.is_ar else "Copy Email"))
+        if hasattr(self, "btn_copy_email") and self.btn_copy_email.winfo_exists():
+            try:
+                self.btn_copy_email.configure(text="تم النسخ!" if self.is_ar else "Copied!")
+                self.after(2000, lambda: hasattr(self, "btn_copy_email") and self.btn_copy_email.winfo_exists() and self.btn_copy_email.configure(text="نسخ الإيميل" if self.is_ar else "Copy Email"))
+            except Exception:
+                pass
 
     def _do_activate(self):
         raw_key = self.txt_key.get("1.0", "end").strip()
