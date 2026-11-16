@@ -854,6 +854,7 @@ from video_studio.license_manager import (
     activate_license_key,
     ActivationDialog,
     get_hardware_id,
+    format_plan_name,
 )
 from ui_modules import (
     MasterExportMixin,
@@ -4184,7 +4185,8 @@ class SongCoverApp(
         state = status.get("state", "trial")
         is_ar = (getattr(self, "language_var", None) and self.language_var.get() == "العربية")
         if state == "licensed":
-            lic_badge = f"👑 مرخص ومفعل رسمياً ({status.get('plan', 'PRO')})" if is_ar else f"👑 Officially Licensed ({status.get('plan', 'PRO')})"
+            p_disp = format_plan_name(status.get("plan", "PRO"), is_ar=is_ar)
+            lic_badge = f"👑 مرخص ومفعل رسمياً ({p_disp})" if is_ar else f"👑 Officially Licensed ({p_disp})"
             lic_fg = "#3fb950"
         elif state == "trial":
             rem_d = status.get("remaining_days", 3)
@@ -4291,10 +4293,11 @@ class SongCoverApp(
         status = check_license_status()
         state = status.get("state", "trial")
         if state == "licensed":
-            plan = status.get("plan", "PRO")
+            plan_raw = status.get("plan", "PRO")
+            display_plan = format_plan_name(plan_raw, is_ar=is_ar)
             days = status.get("remaining_days", 9999)
             dur_str = "دائم مدى الحياة" if days >= 9999 else f"متبقي {days} يوم"
-            lic_summary = f"✅ مفعل رسمياً: {plan} ({dur_str})" if is_ar else f"✅ Officially Licensed: {plan} ({dur_str})"
+            lic_summary = f"✅ مفعل رسمياً: {display_plan} ({dur_str})" if is_ar else f"✅ Officially Licensed: {display_plan} ({dur_str})"
             lic_color = "#3fb950"
         elif state == "trial":
             rem_d = status.get("remaining_days", 3)
@@ -4423,7 +4426,20 @@ class SongCoverApp(
                 plan = status.get("plan", "PRO")
                 days = status.get("remaining_days", 9999)
                 if days < 9999:
-                    txt = f"👑 {plan} ({days}ي)" if is_ar else f"👑 {plan} ({days}d)"
+                    if is_ar:
+                        p_upper = str(plan).upper()
+                        if "شهر" in plan or "MONTH" in p_upper:
+                            short_p = "اشتراك شهر"
+                        elif "6" in plan:
+                            short_p = "اشتراك 6 أشهر"
+                        elif "سنة" in plan or "YEAR" in p_upper:
+                            short_p = "اشتراك سنوي"
+                        else:
+                            short_p = "مفعل"
+                        txt = f"👑 {short_p} ({days} يوم)"
+                    else:
+                        p_clean = "1 Month" if "MONTH" in str(plan).upper() else str(plan)
+                        txt = f"👑 {p_clean} ({days}d)"
                 else:
                     txt = "👑 مفعل مدى الحياة" if is_ar else "👑 Lifetime Pro"
                 if hasattr(self, "btn_license_trial"):

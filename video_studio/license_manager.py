@@ -300,12 +300,28 @@ def activate_license_key(key_str: str) -> Tuple[bool, str]:
         LICENSE_DIR.mkdir(parents=True, exist_ok=True)
         LICENSE_FILE.write_text(key_str.strip(), encoding="utf-8")
         plan = res.get("plan", "PRO") if isinstance(res, dict) else "PRO"
-        if plan == "LIFETIME":
-            return True, "تم تفعيل النسخة الكاملة لبرنامج ClipCraft Studio بنجاح مدى الحياة!"
-        else:
-            return True, f"تم تفعيل البرنامج بنجاح (نوع الترخيص: {plan})!"
+        disp_p = format_plan_name(plan, is_ar=True)
+        return True, f"تم تفعيل البرنامج بنجاح ({disp_p})!"
     except Exception as e:
         return False, f"تعذر حفظ ملف الترخيص: {e}"
+
+
+def format_plan_name(plan_raw: Any, is_ar: bool = True) -> str:
+    """Translates and formats license plan names cleanly into pure Arabic or English."""
+    p = str(plan_raw or "").strip().upper()
+    if not p or p == "NONE":
+        return "غير محدد" if is_ar else "Unspecified"
+    if "LIFETIME" in p or "مدى الحياة" in p or "دائم" in p:
+        return "ترخيص دائم مدى الحياة" if is_ar else "Lifetime Pro License"
+    if "YEAR" in p or "سنة" in p or "365" in p:
+        return "اشتراك سنوي (سنة كاملة)" if is_ar else "Annual License (1 Year)"
+    if "6 MONTH" in p or "6 أشهر" in p or "180" in p or "نصف" in p:
+        return "اشتراك 6 أشهر (نصف سنوي)" if is_ar else "6 Months License"
+    if "MONTH" in p or "شهر" in p or "30" in p:
+        return "اشتراك شهر كامل" if is_ar else "1 Month License"
+    if "DAY" in p or "يوم" in p:
+        return f"ترخيص {plan_raw}" if is_ar else f"{plan_raw} License"
+    return f"نسخة {plan_raw}" if is_ar else f"{plan_raw} Edition"
 
 
 # -----------------------------------------------------------------------------
@@ -535,7 +551,7 @@ class ActivationDialog(tk.Toplevel):
 
         tk.Label(
             badge_row,
-            text="  نشط وموثق برمجياً (Active & Verified)  ",
+            text="  ✅ نشط وموثق رسمياً  " if is_ar else "  ✅ Active & Officially Verified  ",
             font=("Segoe UI", 9, "bold"),
             fg="#ffffff",
             bg="#238636",
@@ -569,20 +585,22 @@ class ActivationDialog(tk.Toplevel):
                 anchor="w",
             ).pack(side="left" if not is_ar else "right", padx=(6, 6))
 
-        val_duration = "مدى الحياة (Lifetime Access) — دائم" if is_ar else "Lifetime Access (Permanent)"
+        display_plan = format_plan_name(plan, is_ar=is_ar)
+        display_customer = "مستخدم معتمد" if (is_ar and customer in ("Registered User", "", None)) else customer
+        val_duration = "دائم مدى الحياة (غير محدد بمدة)" if is_ar else "Lifetime Access (Permanent)"
         if 0 < expires_at and rem_days < 9999:
-            val_duration = f"متبقي {rem_days} يوم" if is_ar else f"{rem_days} days remaining"
+            val_duration = f"متبقي {rem_days} يوماً" if is_ar else f"{rem_days} days remaining"
 
-        add_info_row("خطة الترخيص:" if is_ar else "Plan:", f"👑 {plan} EDITION", "#e3b341")
-        add_info_row("المرخص له:" if is_ar else "Licensed To:", customer, "#58a6ff")
+        add_info_row("خطة الترخيص:" if is_ar else "License Plan:", f"👑 {display_plan}", "#e3b341")
+        add_info_row("المرخص له:" if is_ar else "Licensed To:", display_customer, "#58a6ff")
         add_info_row("مدة الصلاحية:" if is_ar else "Validity:", val_duration, "#3fb950")
         add_info_row("كود الجهاز (HWID):" if is_ar else "Hardware ID:", hwid, "#f0f6fc", is_code=True)
-        add_info_row("التوثيق الرقمي:" if is_ar else "Security:", "RSA-2048 Asymmetric Signature", "#8b949e")
+        add_info_row("التوثيق الرقمي:" if is_ar else "Security:", "تشفير رقمي غير متماثل (RSA-2048)" if is_ar else "RSA-2048 Asymmetric Signature", "#8b949e")
 
         # Copy HWID Shortcut button inside card
         btn_c_hwid = ttk.Button(
             card,
-            text="📋 نسخ كود الجهاز (Copy HWID)" if is_ar else "📋 Copy Hardware ID",
+            text="📋 نسخ كود الجهاز" if is_ar else "📋 Copy Hardware ID",
             command=self._copy_hwid,
             style="Player.TButton",
         )
@@ -875,11 +893,12 @@ class ActivationDialog(tk.Toplevel):
             except Exception:
                 pass
 
-        menu.add_command(label="✂️ قص (Cut)", command=_cut)
-        menu.add_command(label="📋 نسخ (Copy)", command=_copy)
-        menu.add_command(label="📋 لصق (Paste)", command=_paste)
+        is_ar = getattr(self, "is_ar", True)
+        menu.add_command(label="✂️ قص" if is_ar else "✂️ Cut", command=_cut)
+        menu.add_command(label="📋 نسخ" if is_ar else "📋 Copy", command=_copy)
+        menu.add_command(label="📋 لصق" if is_ar else "📋 Paste", command=_paste)
         menu.add_separator()
-        menu.add_command(label="تحديد الكل (Select All)", command=_select_all)
+        menu.add_command(label="تحديد الكل" if is_ar else "Select All", command=_select_all)
 
         def _show_menu(event):
             try:
