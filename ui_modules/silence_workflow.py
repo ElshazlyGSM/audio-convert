@@ -124,27 +124,38 @@ class SilenceWorkflowMixin:
         )
         self.i18n_widgets["silence_sync_subs_chk"].pack(side="left", padx=(0, 10))
 
-        # Row 3: Action Buttons & Summary
+        # Row 3: Action Buttons & Export Settings
         action_row = ttk.Frame(settings_box)
-        action_row.grid(row=3, column=0, columnspan=5, sticky="ew", pady=(4, 0))
-        action_row.columnconfigure(2, weight=1)
+        action_row.grid(row=3, column=0, columnspan=5, sticky="ew", pady=(6, 0))
 
         self.silence_analyze_button = ttk.Button(
             action_row, command=self.start_analyze_silences, style="Action.TButton"
         )
-        self.silence_analyze_button.grid(row=0, column=0, padx=(0, 8), sticky="w")
+        self.silence_analyze_button.pack(side="left", padx=(0, 8))
         self.i18n_widgets["silence_analyze_btn"] = self.silence_analyze_button
 
         self.silence_export_button = ttk.Button(
             action_row, command=self.start_silence_export, style="Primary.TButton"
         )
-        self.silence_export_button.grid(row=0, column=1, padx=(0, 12), sticky="w")
+        self.silence_export_button.pack(side="left", padx=(0, 16))
         self.i18n_widgets["silence_export_btn"] = self.silence_export_button
 
-        self.silence_summary_label = ttk.Label(
-            action_row, textvariable=self.silence_summary_var, font=("Segoe UI", 9, "bold"), foreground="#0066cc"
+        # Output format & quality next to Export button
+        self.i18n_widgets["silence_quality_label"] = ttk.Label(action_row)
+        self.i18n_widgets["silence_quality_label"].pack(side="left", padx=(0, 4))
+        self.silence_quality_combo = ttk.Combobox(
+            action_row, textvariable=self.silence_quality_var, state="readonly", width=30
         )
-        self.silence_summary_label.grid(row=0, column=2, sticky="w")
+        self.silence_quality_combo.pack(side="left", padx=(0, 16))
+        self.silence_quality_combo.bind("<<ComboboxSelected>>", self._on_silence_quality_changed)
+
+        self.i18n_widgets["silence_format_label"] = ttk.Label(action_row)
+        self.i18n_widgets["silence_format_label"].pack(side="left", padx=(0, 4))
+        self.silence_format_combo = ttk.Combobox(
+            action_row, textvariable=self.silence_format_var, state="readonly", width=24
+        )
+        self.silence_format_combo.pack(side="left", padx=(0, 8))
+        self.silence_format_combo.bind("<<ComboboxSelected>>", self._on_silence_format_changed)
 
         # Bottom Card: Detected Silences List & Interactive Timeline Bar
         list_box = ttk.LabelFrame(parent, padding=(12, 8, 12, 10))
@@ -161,7 +172,7 @@ class SilenceWorkflowMixin:
         self.silence_timeline_canvas.bind("<Configure>", lambda _e: self._draw_silence_timeline_canvas())
         self.silence_timeline_canvas.bind("<Button-1>", self._on_silence_timeline_click)
 
-        # Batch Selection Bar
+        # Batch Selection Bar & Summary Label
         list_toolbar = ttk.Frame(list_box)
         list_toolbar.grid(row=1, column=0, sticky="ew", pady=(0, 4))
         self.silence_select_all_btn = ttk.Button(
@@ -181,22 +192,11 @@ class SilenceWorkflowMixin:
         )
         self.silence_deselect_all_btn.pack(side="left", padx=(0, 16))
 
-        # Output format & quality in toolbar
-        self.i18n_widgets["silence_quality_label"] = ttk.Label(list_toolbar)
-        self.i18n_widgets["silence_quality_label"].pack(side="left", padx=(0, 4))
-        self.silence_quality_combo = ttk.Combobox(
-            list_toolbar, textvariable=self.silence_quality_var, state="readonly", width=16
+        # Blue summary text showing detected count & saved time
+        self.silence_summary_label = ttk.Label(
+            list_toolbar, textvariable=self.silence_summary_var, font=("Segoe UI", 9, "bold"), foreground="#0066cc"
         )
-        self.silence_quality_combo.pack(side="left", padx=(0, 12))
-        self.silence_quality_combo.bind("<<ComboboxSelected>>", self._on_silence_quality_changed)
-
-        self.i18n_widgets["silence_format_label"] = ttk.Label(list_toolbar)
-        self.i18n_widgets["silence_format_label"].pack(side="left", padx=(0, 4))
-        self.silence_format_combo = ttk.Combobox(
-            list_toolbar, textvariable=self.silence_format_var, state="readonly", width=18
-        )
-        self.silence_format_combo.pack(side="left", padx=(0, 12))
-        self.silence_format_combo.bind("<<ComboboxSelected>>", self._on_silence_format_changed)
+        self.silence_summary_label.pack(side="left", fill="x", expand=True)
 
         # Scrollable List Frame
         list_frame = ttk.Frame(list_box)
