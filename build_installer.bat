@@ -32,6 +32,24 @@ if "%FFPROBE_EXE%"=="" (
     exit /b 1
 )
 
-py -3.12 -m PyInstaller --noconfirm --onedir --windowed --name MediaAudioStudio --version-file file_version_info.txt --add-binary "%FFMPEG_EXE%;." --add-binary "%FFPLAY_EXE%;." --add-binary "%FFPROBE_EXE%;." --collect-all yt_dlp --collect-all faster_whisper --collect-all ctranslate2 --collect-all tokenizers --collect-all huggingface_hub gui.py
-"%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" installer.iss
+echo Building ClipCraft Studio with PyInstaller...
+py -3.12 -m PyInstaller --noconfirm ClipCraftStudio.spec
+if errorlevel 1 (
+    echo PyInstaller build failed!
+    pause
+    exit /b 1
+)
+
+echo Building Inno Setup Installer...
+"%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" installer_setup.iss
+if errorlevel 1 (
+    echo Inno Setup compilation failed!
+    pause
+    exit /b 1
+)
+
+echo.
+echo ========================================================
+echo BUILD SUCCESSFUL! Installer created in setup_output\
+echo ========================================================
 if "%1" neq "--no-pause" pause
