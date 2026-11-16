@@ -694,6 +694,7 @@ class ActivationDialog(tk.Toplevel):
         self.ent_hwid.insert(0, hwid)
         self.ent_hwid.configure(state="readonly")
         self.ent_hwid.pack(side="left", fill="x", expand=True, padx=(4, 8))
+        self._attach_text_context_menu(self.ent_hwid)
 
         btn_copy = ttk.Button(
             hw_box,
@@ -736,15 +737,36 @@ class ActivationDialog(tk.Toplevel):
         )
         self.btn_copy_email.pack(side="right")
 
-        # Step 2: Key Input Box
+        # Step 2: Key Input Box with 1-Click Paste Button & Right-Click Context Menu
+        step2_header = tk.Frame(content_box, bg="#0d1117")
+        step2_header.pack(fill="x", pady=(0, 6))
+
         lbl_step2 = tk.Label(
-            content_box,
+            step2_header,
             text="الخطوة 2: أدخل مفتاح التفعيل المستلم من المطور:" if is_ar else "Step 2: Enter Activation Key received from developer:",
             font=("Segoe UI", 10, "bold"),
             fg="#f0f6fc",
             bg="#0d1117",
         )
-        lbl_step2.pack(anchor="w", pady=(0, 6))
+        lbl_step2.pack(side="left")
+
+        def _paste_from_clipboard():
+            try:
+                clip = self.clipboard_get()
+                if clip:
+                    self.txt_key.delete("1.0", "end")
+                    self.txt_key.insert("1.0", clip.strip())
+                    self.lbl_msg.configure(text="✅ تم لصق الكود بنجاح!" if is_ar else "✅ Key pasted successfully!", fg="#3fb950")
+            except Exception:
+                pass
+
+        btn_paste_key = ttk.Button(
+            step2_header,
+            text="📋 لصق الكود" if is_ar else "📋 Paste Key",
+            command=_paste_from_clipboard,
+            style="Player.TButton",
+        )
+        btn_paste_key.pack(side="right")
 
         self.txt_key = tk.Text(
             content_box,
@@ -760,6 +782,9 @@ class ActivationDialog(tk.Toplevel):
             pady=6,
         )
         self.txt_key.pack(fill="x", pady=(0, 8))
+
+        # Right-Click Context Menu & Universal Ctrl+V
+        self._attach_text_context_menu(self.txt_key, on_paste=_paste_from_clipboard)
 
         # Status & Message Label
         self.lbl_msg = tk.Label(
@@ -810,6 +835,68 @@ class ActivationDialog(tk.Toplevel):
                 style="Player.TButton",
             )
             btn_min_bot.pack(side="right")
+
+    def _attach_text_context_menu(self, widget, on_paste=None):
+        """Attaches right-click menu and universal Ctrl+V paste (Arabic and English keyboard)."""
+        menu = tk.Menu(widget, tearoff=0, bg="#161b22", fg="#c9d1d9", activebackground="#238636", activeforeground="#ffffff")
+
+        def _cut():
+            try:
+                widget.event_generate("<<Cut>>")
+            except Exception:
+                pass
+
+        def _copy():
+            try:
+                widget.event_generate("<<Copy>>")
+            except Exception:
+                pass
+
+        def _paste():
+            if on_paste:
+                on_paste()
+            else:
+                try:
+                    clip = widget.clipboard_get()
+                    if clip:
+                        widget.insert("insert", clip)
+                except Exception:
+                    try:
+                        widget.event_generate("<<Paste>>")
+                    except Exception:
+                        pass
+
+        def _select_all():
+            try:
+                if isinstance(widget, tk.Text):
+                    widget.tag_add("sel", "1.0", "end")
+                elif isinstance(widget, tk.Entry):
+                    widget.select_range(0, "end")
+            except Exception:
+                pass
+
+        menu.add_command(label="✂️ قص (Cut)", command=_cut)
+        menu.add_command(label="📋 نسخ (Copy)", command=_copy)
+        menu.add_command(label="📋 لصق (Paste)", command=_paste)
+        menu.add_separator()
+        menu.add_command(label="تحديد الكل (Select All)", command=_select_all)
+
+        def _show_menu(event):
+            try:
+                widget.focus_set()
+                menu.tk_popup(event.x_root, event.y_root)
+            except Exception:
+                pass
+
+        widget.bind("<Button-3>", _show_menu)
+
+        # Universal Ctrl+V (works on English, Arabic, and any other layout)
+        def _universal_ctrl_v(event):
+            if getattr(event, "keycode", 0) == 86 or getattr(event, "keysym", "").lower() in ("v", "arabic_ra", "ra", "\u0631"):
+                _paste()
+                return "break"
+
+        widget.bind("<Control-KeyPress>", _universal_ctrl_v)
 
     def _copy_hwid(self):
         hwid = get_hardware_id()

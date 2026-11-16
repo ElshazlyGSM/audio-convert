@@ -191,20 +191,41 @@ SILENCE_FORMATS = {
 def _resolve_ffmpeg(ffmpeg_exe=None):
     if ffmpeg_exe and Path(ffmpeg_exe).exists():
         return str(ffmpeg_exe)
-    for cand in [
-        Path("E:/Songs/tools/ffmpeg-essentials/ffmpeg-8.1.2-essentials_build/bin/ffmpeg.exe"),
+    try:
+        import convert
+        cand = convert.ffmpeg_executable()
+        if cand and Path(cand).exists():
+            return str(cand)
+    except Exception:
+        pass
+    cands = [
+        Path(sys.executable).resolve().parent / "ffmpeg.exe" if getattr(sys, "frozen", False) else None,
+        Path(sys.executable).resolve().parent / "_internal" / "ffmpeg.exe" if getattr(sys, "frozen", False) else None,
+        Path(getattr(sys, "_MEIPASS", "")) / "ffmpeg.exe" if getattr(sys, "frozen", False) else None,
+        Path(__file__).resolve().parent.parent / "tools" / "ffmpeg-essentials" / "ffmpeg-8.1.2-essentials_build" / "bin" / "ffmpeg.exe",
         Path("tools/ffmpeg-essentials/ffmpeg-8.1.2-essentials_build/bin/ffmpeg.exe"),
-    ]:
-        if cand.exists():
-            return str(cand.resolve())
-    return "ffmpeg"
+    ]
+    for c in cands:
+        if c and c.exists():
+            return str(c.resolve())
+    disc = shutil.which("ffmpeg")
+    return str(disc) if disc else "ffmpeg"
 
 
 def _probe_duration(media_path, ffmpeg_exe=None):
     """Returns total duration in seconds of media_path."""
     ffmpeg_bin = _resolve_ffmpeg(ffmpeg_exe)
-    cand_probe = Path(str(ffmpeg_bin)).with_name("ffprobe.exe")
-    ffprobe_bin = str(cand_probe) if cand_probe.exists() else (shutil.which("ffprobe") or "ffprobe")
+    ffprobe_bin = None
+    try:
+        import convert
+        cand_p = convert.ffprobe_executable()
+        if cand_p and Path(cand_p).exists():
+            ffprobe_bin = str(cand_p)
+    except Exception:
+        pass
+    if not ffprobe_bin:
+        cand_probe = Path(str(ffmpeg_bin)).with_name("ffprobe.exe")
+        ffprobe_bin = str(cand_probe) if cand_probe.exists() else (shutil.which("ffprobe") or "ffprobe")
     try:
         cmd = [
             ffprobe_bin,
@@ -219,6 +240,7 @@ def _probe_duration(media_path, ffmpeg_exe=None):
             text=True,
             encoding="utf-8",
             errors="replace",
+            timeout=10,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         for line in res.stdout.splitlines():
@@ -368,7 +390,7 @@ def detect_silences(
         ffmpeg_bin,
         "-hide_banner",
         "-nostdin",
-        "-nostats",
+        "-progress", "pipe:2",
     ]
     if s_sec > 0:
         cmd.extend(["-ss", f"{s_sec:.3f}"])
@@ -400,6 +422,8 @@ def detect_silences(
     re_end = re.compile(r"silence_end:\s*([0-9.]+)\s*\|\s*silence_duration:\s*([0-9.]+)")
     re_time = re.compile(r"time=(\d+):(\d+):(\d+(?:\.\d+)?)")
     re_dur = re.compile(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
+    re_out_ms = re.compile(r"out_time_ms=(\d+)")
+    re_out_us = re.compile(r"out_time_us=(\d+)")
 
     silences = []
     current_start = None
@@ -421,6 +445,13 @@ def detect_silences(
             if m_dur:
                 h, m, s = int(m_dur.group(1)), int(m_dur.group(2)), float(m_dur.group(3))
                 total_dur = h * 3600 + m * 60 + s
+
+        m_ms = re_out_ms.search(line)
+        if m_ms and progress_callback and total_dur > 0:
+            cur_s = int(m_ms.group(1)) / 1_000_000.0
+            pct = min(98, max(1, int((cur_s / total_dur) * 100)))
+            progress_callback(pct)
+            continue
 
         m_s = re_start.search(line)
         if m_s:
@@ -794,8 +825,7 @@ def export_silence_cut_media(
             "-hide_banner",
             "-loglevel", "error",
             "-nostdin",
-            "-progress", "pipe:1",
-            "-nostats",
+            "-progress", "pipe:2",
             *input_opts,
             "-i", str(media_path),
         ]
@@ -812,7 +842,7 @@ def export_silence_cut_media(
                 fc_parts.append("[0:a]anull[outa]")
 
             fc_str = ";".join(fc_parts)
-            if len(fc_str) > 6000:
+            if len(fc_str) > 200:
                 script_file = output_path.with_name(f"_fc_{int(time.time() * 1000)}.txt")
                 script_file.write_text(fc_str, encoding="utf-8")
                 cmd.extend(["-filter_complex_script", str(script_file)])
@@ -846,7 +876,7 @@ def export_silence_cut_media(
         else:
             cmd.append("-vn")
             if a_expr:
-                if len(a_expr) > 6000:
+                if len(a_expr) > 200:
                     script_file = output_path.with_name(f"_af_{int(time.time() * 1000)}.txt")
                     script_file.write_text(f"[0:a]{a_expr}[outa]", encoding="utf-8")
                     cmd.extend(["-filter_complex_script", str(script_file), "-map", "[outa]"])
@@ -868,19 +898,10 @@ def export_silence_cut_media(
             raise CancelledError("Operation canceled by user")
 
         stderr_output = []
-        def _drain_stderr(pipe):
-            try:
-                for err_line in pipe:
-                    stderr_output.append(err_line)
-                    if len(stderr_output) > 200:
-                        stderr_output.pop(0)
-            except Exception:
-                pass
-
         proc = subprocess.Popen(
             cmd,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
@@ -889,16 +910,13 @@ def export_silence_cut_media(
         )
         _register_proc(proc)
 
-        t_err = threading.Thread(target=_drain_stderr, args=(proc.stderr,), daemon=True)
-        t_err.start()
-
         last_report_sec = -1.0
         while True:
             if cancel_callback and cancel_callback():
                 _stop_proc(proc)
                 raise CancelledError("Operation canceled by user")
 
-            line = proc.stdout.readline()
+            line = proc.stderr.readline()
             if not line:
                 if proc.poll() is not None:
                     break
@@ -906,6 +924,10 @@ def export_silence_cut_media(
                 continue
 
             line = line.strip()
+            stderr_output.append(line)
+            if len(stderr_output) > 100:
+                stderr_output.pop(0)
+
             cur_sec = None
             if line.startswith("out_time_us="):
                 try:
