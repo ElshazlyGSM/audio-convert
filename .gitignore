@@ -57,5 +57,8 @@ setup_output/
 # Security Keys & Keygen (DO NOT PUBLISH)
 *.pem
 clipcraft_keygen.py
+*keygen*
+*مولد_المفاتيح*
 *.log
+
 
