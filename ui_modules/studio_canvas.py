@@ -18,7 +18,7 @@ from video_studio.aspect_ratios import (
     clamp_pan_for_transform,
     render_transformed_pil_frame,
 )
-from video_studio.color_grading import apply_color_to_image, is_color_neutral
+from video_studio.color_grading import apply_color_to_image, is_color_neutral, extract_video_sample_frame
 from video_studio.branding import (
     render_text_card_pil,
     apply_opacity_and_rotation,
@@ -27,6 +27,68 @@ from video_studio.arabic_support import prepare_arabic_for_rendering
 from video_studio.icons_library import ICON_PRESETS, render_media_overlay_pil
 from ui_dialogs.icon_picker_dialog import IconPickerDialog
 import convert
+
+
+def evaluate_item_animation(item: dict, current_tl_sec: float, ref_box_w: int = 1080, ref_box_h: int = 1920) -> tuple:
+    """
+    Evaluates in/out animation for an overlay item at a given timeline time.
+    Returns (opacity_mult, offset_x_px, offset_y_px, scale_mult).
+    """
+    anim_in = str(item.get("anim_in", "none") or "none").lower()
+    anim_out = str(item.get("anim_out", "none") or "none").lower()
+    anim_dur = max(0.1, min(3.0, float(item.get("anim_dur", 0.4) or 0.4)))
+
+    if item.get("full_duration", False):
+        return (1.0, 0, 0, 1.0)
+
+    s = float(item.get("start_sec", 0.0) or 0.0)
+    e = float(item.get("end_sec", s + 5.0) or (s + 5.0))
+    t = float(current_tl_sec)
+
+    opacity = 1.0
+    off_x = 0
+    off_y = 0
+    scale = 1.0
+
+    # In-animation
+    if anim_in != "none" and s <= t < s + anim_dur:
+        p = max(0.0, min(1.0, (t - s) / anim_dur))
+        ease = p * p * (3.0 - 2.0 * p)
+        if anim_in == "fade":
+            opacity *= ease
+        elif anim_in in ("slide_up", "slide_bottom"):
+            off_y += int((1.0 - ease) * (ref_box_h * 0.15))
+            opacity *= ease
+        elif anim_in in ("slide_down", "slide_top"):
+            off_y -= int((1.0 - ease) * (ref_box_h * 0.15))
+            opacity *= ease
+        elif anim_in in ("slide_left",):
+            off_x += int((1.0 - ease) * (ref_box_w * 0.20))
+            opacity *= ease
+        elif anim_in in ("slide_right",):
+            off_x -= int((1.0 - ease) * (ref_box_w * 0.20))
+            opacity *= ease
+        elif anim_in in ("pop", "zoom"):
+            scale *= (0.2 + 0.8 * ease)
+            opacity *= ease
+
+    # Out-animation
+    if anim_out != "none" and e - anim_dur < t <= e:
+        p = max(0.0, min(1.0, (e - t) / anim_dur))
+        ease = p * p * (3.0 - 2.0 * p)
+        if anim_out == "fade":
+            opacity *= ease
+        elif anim_out in ("slide_down", "slide_bottom"):
+            off_y += int((1.0 - ease) * (ref_box_h * 0.15))
+            opacity *= ease
+        elif anim_out in ("slide_up", "slide_top"):
+            off_y -= int((1.0 - ease) * (ref_box_h * 0.15))
+            opacity *= ease
+        elif anim_out in ("shrink", "zoom"):
+            scale *= (0.2 + 0.8 * ease)
+            opacity *= ease
+
+    return (opacity, off_x, off_y, scale)
 
 
 class StudioCanvasMixin:
@@ -44,18 +106,28 @@ class StudioCanvasMixin:
         if hasattr(self, "studio_toggle_btn"):
             is_ar = self.language_var.get() == "العربية"
             self.studio_toggle_btn.configure(text="🎨 استوديو المونتاج" if is_ar else "🎨 Studio Preview")
+        if getattr(self, "media_player", None) and hasattr(self, "_attach_video_surface"):
+            self._attach_video_surface()
+            self.apply_video_aspect_ratio()
+            self.apply_video_color_adjustments()
 
     def _show_studio_canvas(self):
+        self.studio_live_preview_mode = True
+        if hasattr(self, "video_surface"):
+            self.video_surface.grid_remove()
         if hasattr(self, "player_studio_canvas"):
             self.player_studio_canvas.grid(row=1, column=0, sticky="nsew")
             self.player_studio_canvas.tk.call("raise", self.player_studio_canvas._w)
             self._render_player_studio_canvas()
         if hasattr(self, "studio_toggle_btn"):
             is_ar = self.language_var.get() == "العربية"
-            self.studio_toggle_btn.configure(text="📺 مشغل VLC الخام" if is_ar else "📺 Raw VLC")
+            if getattr(self, "studio_live_preview_mode", False):
+                self.studio_toggle_btn.configure(text="📺 المعاينة المباشرة" if is_ar else "📺 Direct Preview")
+            else:
+                self.studio_toggle_btn.configure(text="🎨 استوديو المونتاج" if is_ar else "🎨 Studio Preview")
 
     def toggle_studio_view(self):
-        if getattr(self, "studio_live_preview_mode", True) and hasattr(self, "player_studio_canvas") and self.player_studio_canvas.winfo_ismapped():
+        if getattr(self, "studio_live_preview_mode", False) and hasattr(self, "player_studio_canvas") and self.player_studio_canvas.winfo_ismapped():
             self.studio_live_preview_mode = False
             self._show_vlc_surface()
         else:
@@ -90,7 +162,8 @@ class StudioCanvasMixin:
         th_dlg = getattr(self, "_theater_dialog", None)
         if th_dlg is not None and th_dlg.winfo_exists():
             try:
-                th_dlg.destroy()
+                th_dlg.close()
+                return
             except Exception:
                 pass
         self._theater_dialog = None
@@ -98,7 +171,13 @@ class StudioCanvasMixin:
         is_ar = (self.language_var.get() == "العربية") if hasattr(self, "language_var") else True
         if hasattr(self, "expand_video_button"):
             self.expand_video_button.configure(text="⛶ تكبير" if is_ar else "⛶ Fullscreen")
-        self._show_studio_canvas()
+        if getattr(self, "studio_live_preview_mode", False):
+            self._show_studio_canvas()
+        else:
+            self._show_vlc_surface()
+            self._attach_video_surface()
+            self.apply_video_aspect_ratio()
+            self.apply_video_color_adjustments()
         self.after(50, self._sync_live_video_overlay)
 
     # -------------------------------------------------------------------------
@@ -152,7 +231,7 @@ class StudioCanvasMixin:
                     vpath = self.input_path
                     if not vpath or not vpath.is_file():
                         break
-                    frame = self.fast_preview.get_frame(vpath, req_ts, max_dim=640)
+                    frame = self.fast_preview.get_frame(vpath, req_ts, max_dim=1280)
                     if frame is not None and vpath == self.input_path:
                         self._cached_player_frame = frame
                         self._cached_player_frame_ts = req_ts
@@ -356,6 +435,12 @@ class StudioCanvasMixin:
                     self.clip_mute_var.set(muted)
                 if hasattr(self, "clip_vol_lbl"):
                     self.clip_vol_lbl.configure(text="MUTE" if muted else f"{vol_pct}%")
+                if hasattr(self, "clip_fade_in_var"):
+                    self.clip_fade_in_var.set(f"{float(clip.get('audio_fade_in', 0.0) or 0.0):.2f}")
+                if hasattr(self, "clip_fade_out_var"):
+                    self.clip_fade_out_var.set(f"{float(clip.get('audio_fade_out', 0.0) or 0.0):.2f}")
+                if hasattr(self, "clip_denoise_var"):
+                    self.clip_denoise_var.set(bool(clip.get("audio_denoise", False)))
         finally:
             self._updating_xf_ui = False
 
@@ -520,13 +605,20 @@ class StudioCanvasMixin:
     # -------------------------------------------------------------------------
     # Canvas Paint Engine
     # -------------------------------------------------------------------------
+    def _retry_render_studio_canvas(self):
+        self._studio_retry_pending = False
+        self._render_player_studio_canvas()
+
     def _render_player_studio_canvas(self):
-        if not hasattr(self, "player_studio_canvas") or not self.player_studio_canvas.winfo_ismapped():
+        if not hasattr(self, "player_studio_canvas"):
             return
 
         cw = self.player_studio_canvas.winfo_width()
         ch = self.player_studio_canvas.winfo_height()
         if cw < 40 or ch < 40:
+            if not getattr(self, "_studio_retry_pending", False):
+                self._studio_retry_pending = True
+                self.after(50, self._retry_render_studio_canvas)
             return
 
         is_ar = self.language_var.get() == "العربية"
@@ -647,7 +739,12 @@ class StudioCanvasMixin:
             self.player_studio_canvas.create_rectangle(vx0, vy0, vx1, vy1, fill="#000000", outline="")
         else:
             self.player_studio_canvas.create_rectangle(vx0, vy0, vx1, vy1, fill="#121721", outline="")
-            msg = "🎬 اختر فيديو للبدء في المونتاج الاحترافي" if is_ar else "🎬 Load a video to start DaVinci editing"
+            if getattr(self, "input_path", None) and self.input_path.is_file() and self.input_path.suffix.lower() in convert.VIDEO_EXTS:
+                msg = "⏳ جاري تجهيز معاينة الفيديو..." if is_ar else "⏳ Loading video preview..."
+                if not getattr(self, "_preview_decode_busy", False) and self._cached_player_frame is None:
+                    self.after(20, lambda: self._request_fast_preview_frame(0.0, force=True))
+            else:
+                msg = "🎬 اختر فيديو للبدء في المونتاج الاحترافي" if is_ar else "🎬 Load a video to start DaVinci editing"
             self.player_studio_canvas.create_text(
                 (vx0 + vx1) // 2, (vy0 + vy1) // 2,
                 text=msg, fill="#8b949e", font=("Segoe UI", max(9, min(12, box_w // 26)), "bold")
@@ -691,8 +788,9 @@ class StudioCanvasMixin:
                     continue
                 photo = ImageTk.PhotoImage(ov_im)
                 self._overlay_photo_refs.append(photo)
-                cx = vx0 + int(round(box_w * float(m_item.get("x", 0.5))))
-                cy = vy0 + int(round(box_h * float(m_item.get("y", 0.5))))
+                _op_m, off_x, off_y, _sc_m = evaluate_item_animation(m_item, tl_now, box_w, box_h)
+                cx = vx0 + int(round(box_w * float(m_item.get("x", 0.5)))) + off_x
+                cy = vy0 + int(round(box_h * float(m_item.get("y", 0.5)))) + off_y
                 iw, ih = ov_im.size
                 ix0, iy0 = cx - iw // 2, cy - ih // 2
                 ix1, iy1 = ix0 + iw, iy0 + ih
@@ -742,8 +840,9 @@ class StudioCanvasMixin:
                     continue
                 photo = ImageTk.PhotoImage(card_im)
                 self._overlay_photo_refs.append(photo)
-                cx = vx0 + int(round(box_w * float(t_item.get("x", 0.5))))
-                cy = vy0 + int(round(box_h * float(t_item.get("y", 0.12))))
+                _op_m, off_x, off_y, _sc_m = evaluate_item_animation(t_item, tl_now, box_w, box_h)
+                cx = vx0 + int(round(box_w * float(t_item.get("x", 0.5)))) + off_x
+                cy = vy0 + int(round(box_h * float(t_item.get("y", 0.12)))) + off_y
                 tw, th = card_im.size
                 tx0, ty0 = cx - tw // 2, cy - th // 2
                 tx1, ty1 = tx0 + tw, ty0 + th
@@ -800,18 +899,20 @@ class StudioCanvasMixin:
                     photo = ImageTk.PhotoImage(l_im_final)
                     self._overlay_photo_refs.append(photo)
                     fw, fh = l_im_final.size
+                    _op_m, off_x, off_y, _sc_m = evaluate_item_animation(l_item, tl_now, box_w, box_h)
                     if anchor_mode == "center":
-                        lx0 = vx0 + int(round(box_w * lx_pct)) - fw // 2
-                        ly0 = vy0 + int(round(box_h * ly_pct)) - fh // 2
+                        lx0 = vx0 + int(round(box_w * lx_pct)) - fw // 2 + off_x
+                        ly0 = vy0 + int(round(box_h * ly_pct)) - fh // 2 + off_y
                     else:
-                        lx0 = vx0 + int(round(box_w * lx_pct))
-                        ly0 = vy0 + int(round(box_h * ly_pct))
+                        lx0 = vx0 + int(round(box_w * lx_pct)) + off_x
+                        ly0 = vy0 + int(round(box_h * ly_pct)) + off_y
                     self.player_studio_canvas.create_image(lx0, ly0, anchor="nw", image=photo)
                     lx1, ly1 = lx0 + fw, ly0 + fh
                 else:
                     fw, fh = lw, max(20, int(lw * 0.5))
-                    lx0 = vx0 + int(round(box_w * lx_pct))
-                    ly0 = vy0 + int(round(box_h * ly_pct))
+                    _op_m, off_x, off_y, _sc_m = evaluate_item_animation(l_item, tl_now, box_w, box_h)
+                    lx0 = vx0 + int(round(box_w * lx_pct)) + off_x
+                    ly0 = vy0 + int(round(box_h * ly_pct)) + off_y
                     lx1, ly1 = lx0 + fw, ly0 + fh
                     self.player_studio_canvas.create_rectangle(lx0, ly0, lx1, ly1, fill="#e5534b", outline="#ffffff", width=1)
                     self.player_studio_canvas.create_text((lx0 + lx1) // 2, (ly0 + ly1) // 2, text="LOGO", fill="#ffffff", font=("Segoe UI", 8, "bold"))
@@ -1237,3 +1338,166 @@ class StudioCanvasMixin:
         self._refresh_master_export_summary()
         self._show_inspector_context("overlay")
         self._render_player_studio_canvas()
+
+    def compose_full_res_snapshot_frame(self, target_w: int = None, target_h: int = None) -> Image.Image:
+        """
+        Renders a full-resolution composite cover snapshot (including transformed video frame,
+        aspect ratio crop/letterbox, color grading, V2 media/icons, V3 text+ cards, V4 logo watermarks,
+        and in/out animation states at the current playhead).
+        """
+        if not getattr(self, "input_path", None) or not Path(self.input_path).is_file():
+            return None
+
+        # 1. Determine target resolution
+        ratio_key = self.trim_aspect_var.get() if hasattr(self, "trim_aspect_var") else "original"
+        aspect_lookup = {
+            "9:16": (1080, 1920),
+            "1:1": (1080, 1080),
+            "4:5": (1080, 1350),
+            "4:3": (1440, 1080),
+            "16:9": (1920, 1080),
+        }
+
+        if target_w and target_h:
+            box_w, box_h = int(target_w), int(target_h)
+        elif ratio_key in aspect_lookup:
+            box_w, box_h = aspect_lookup[ratio_key]
+        elif getattr(self, "media_width", 0) and getattr(self, "media_height", 0):
+            box_w = int(self.media_width)
+            box_h = int(self.media_height)
+        else:
+            box_w, box_h = (1920, 1080)
+
+        tl_now = float(getattr(self, "nle_playhead_sec", 0.0))
+        c_idx, cur_clip, src_now = self.nle_project.timeline_to_source(tl_now) if hasattr(self, "nle_project") else (0, None, tl_now)
+
+        # 2. Extract or use cached high-res frame
+        raw_frame = None
+        try:
+            raw_frame = extract_video_sample_frame(self.input_path, src_now, max_w=max(box_w, 1920))
+        except Exception:
+            pass
+        if raw_frame is None:
+            raw_frame = getattr(self, "_cached_player_frame", None)
+        if raw_frame is None:
+            raw_frame = Image.new("RGBA", (box_w, box_h), (10, 14, 20, 255))
+
+        # 3. Apply color grading
+        color_cfg = self.video_branding_config.get("color_config", {})
+        color_on = isinstance(color_cfg, dict) and color_cfg.get("enabled", True) and not is_color_neutral(color_cfg)
+        if color_on:
+            raw_frame = apply_color_to_image(raw_frame, color_cfg)
+
+        # 4. Transform / Crop / Fit to target aspect ratio
+        xf = self._get_effective_video_transform(c_idx)
+        fit_mode = self.video_branding_config.get("fit_mode", "crop")
+        v1_enabled = self.nle_project.track_enabled.get("V1", True) if hasattr(self, "nle_project") else True
+
+        if v1_enabled:
+            comp_base = render_transformed_pil_frame(
+                raw_frame,
+                box_w,
+                box_h,
+                fit_mode=fit_mode,
+                zoom=xf["zoom"],
+                pan_x=xf["pan_x"],
+                pan_y=xf["pan_y"],
+                flip_h=xf["flip_h"],
+                clamp_edges=xf["clamp_edges"],
+            )
+        else:
+            comp_base = Image.new("RGBA", (box_w, box_h), (0, 0, 0, 255))
+
+        if comp_base.mode != "RGBA":
+            comp_base = comp_base.convert("RGBA")
+
+        is_ar = (self.language_var.get() == "العربية") if hasattr(self, "language_var") else True
+
+        # 5. Track V2: Icons, Badges & Custom Images
+        if hasattr(self, "nle_project") and self.nle_project.track_enabled.get("V2", True):
+            for idx, m_item in enumerate(self.nle_project.media_items):
+                if not self.nle_project.is_item_visible_at("V2", m_item, tl_now):
+                    continue
+                ov_im = render_media_overlay_pil(m_item, box_w, box_h, is_ar=is_ar)
+                if ov_im is None:
+                    continue
+                op_mult, off_x, off_y, sc_mult = evaluate_item_animation(m_item, tl_now, box_w, box_h)
+                if op_mult < 0.01:
+                    continue
+                if abs(sc_mult - 1.0) > 0.02:
+                    nw = max(10, int(ov_im.width * sc_mult))
+                    nh = max(10, int(ov_im.height * sc_mult))
+                    ov_im = ov_im.resize((nw, nh), Image.Resampling.LANCZOS)
+                if op_mult < 0.99:
+                    ov_im = apply_opacity_and_rotation(ov_im, opacity=op_mult, rotation_deg=0.0)
+
+                cx = int(round(box_w * float(m_item.get("x", 0.5)))) + off_x
+                cy = int(round(box_h * float(m_item.get("y", 0.5)))) + off_y
+                ix0 = cx - ov_im.width // 2
+                iy0 = cy - ov_im.height // 2
+                comp_base.alpha_composite(ov_im, (ix0, iy0))
+
+        # 6. Track V3: Text+ Cards
+        if hasattr(self, "nle_project") and self.nle_project.track_enabled.get("V3", True) and (not hasattr(self, "trim_title_var") or self.trim_title_var.get()):
+            for idx, t_item in enumerate(self.nle_project.text_items):
+                if not self.nle_project.is_item_visible_at("V3", t_item, tl_now):
+                    continue
+                raw_text = str(t_item.get("text", "")).strip() or ("نص تجريبي" if is_ar else "Sample Text")
+                card_im = render_text_card_pil(
+                    text=raw_text,
+                    bg_color_key=t_item.get("bg_color", "black"),
+                    text_color_key=t_item.get("text_color", "white"),
+                    font_size=int(t_item.get("font_size", 34)),
+                    font_name=t_item.get("font_name", "Segoe UI"),
+                    video_w=box_w,
+                    video_h=box_h,
+                    opacity=float(t_item.get("opacity", 1.0)),
+                    rotation=float(t_item.get("rotation", 0.0)),
+                )
+                if card_im is None:
+                    continue
+                op_mult, off_x, off_y, sc_mult = evaluate_item_animation(t_item, tl_now, box_w, box_h)
+                if op_mult < 0.01:
+                    continue
+                if abs(sc_mult - 1.0) > 0.02:
+                    nw = max(10, int(card_im.width * sc_mult))
+                    nh = max(10, int(card_im.height * sc_mult))
+                    card_im = card_im.resize((nw, nh), Image.Resampling.LANCZOS)
+                if op_mult < 0.99:
+                    card_im = apply_opacity_and_rotation(card_im, opacity=op_mult, rotation_deg=0.0)
+
+                cx = int(round(box_w * float(t_item.get("x", 0.5)))) + off_x
+                cy = int(round(box_h * float(t_item.get("y", 0.12)))) + off_y
+                tx0 = cx - card_im.width // 2
+                ty0 = cy - card_im.height // 2
+                comp_base.alpha_composite(card_im, (tx0, ty0))
+
+        # 7. Track V4: Logo Watermarks
+        if hasattr(self, "nle_project") and self.nle_project.track_enabled.get("V4", True) and (not hasattr(self, "trim_logo_var") or self.trim_logo_var.get()):
+            for idx, l_item in enumerate(self.nle_project.logo_items):
+                if not self.nle_project.is_item_visible_at("V4", l_item, tl_now):
+                    continue
+                logo_p = str(l_item.get("path", "")).strip()
+                if not logo_p or not Path(logo_p).is_file():
+                    continue
+                l_scale = max(0.04, min(0.85, float(l_item.get("scale", 0.16))))
+                lw = max(32, int(round(box_w * l_scale)))
+                try:
+                    with Image.open(logo_p) as lim:
+                        ow, oh = lim.size
+                        lh = max(14, int(round(lw * (oh / max(1, ow)))))
+                        l_rgba = lim.convert("RGBA").resize((lw, lh), Image.Resampling.LANCZOS)
+                    l_final = apply_opacity_and_rotation(
+                        l_rgba,
+                        opacity=float(l_item.get("opacity", 0.85)),
+                        rotation_deg=float(l_item.get("rotation", 0.0)),
+                    )
+                    _op_m, off_x, off_y, _sc_m = evaluate_item_animation(l_item, tl_now, box_w, box_h)
+                    cx = int(round(box_w * float(l_item.get("x", 0.80)))) + off_x
+                    cy = int(round(box_h * float(l_item.get("y", 0.04)))) + off_y
+                    comp_base.alpha_composite(l_final, (cx, cy))
+                except Exception:
+                    pass
+
+        return comp_base
+

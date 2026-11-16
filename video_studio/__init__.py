@@ -161,4 +161,8 @@ __all__ = [
     "has_recoverable_session",
     "mark_clean_exit",
     "clear_autosave",
+    "check_for_updates",
+    "UpdateDialog",
 ]
+
+from .update_manager import check_for_updates, UpdateDialog

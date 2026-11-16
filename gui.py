@@ -1,5 +1,5 @@
 """
-Media Audio Studio GUI
+ClipCraft Studio GUI
 Developer: ahmed elshazly
 Email: Elshazly.gsm@gmail.com
 """
@@ -28,18 +28,39 @@ from PIL import Image, ImageTk
 
 APP_DIR = Path(__file__).resolve().parent
 os.chdir(APP_DIR)
-DEFAULT_OUTPUT_DIR = Path.home() / "Music" / "Media Audio Studio"
-SETTINGS_PATH = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Media Audio Studio" / "settings.json"
+DEFAULT_OUTPUT_DIR = Path.home() / "Videos" / "ClipCraft Studio"
+SETTINGS_PATH = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "ClipCraft Studio" / "settings.json"
 
-VLC_DIRS = [
+EXE_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else APP_DIR
+MEI_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))
+
+VLC_CANDIDATE_DIRS = [
+    EXE_DIR / "vlc",
+    EXE_DIR,
+    MEI_DIR / "vlc",
+    MEI_DIR,
+    APP_DIR / "vlc",
+    APP_DIR,
     Path(r"C:\Program Files\VideoLAN\VLC"),
     Path(r"C:\Program Files (x86)\VideoLAN\VLC"),
 ]
-for vlc_dir in VLC_DIRS:
-    if vlc_dir.exists():
-        os.environ["PATH"] = f"{vlc_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+
+for _vdir in VLC_CANDIDATE_DIRS:
+    if not _vdir.exists():
+        continue
+    _lib = _vdir / "libvlc.dll" if (_vdir / "libvlc.dll").exists() else None
+    if _lib and _lib.is_file():
+        _folder = _lib.parent
+        os.environ["PATH"] = f"{_folder}{os.pathsep}{os.environ.get('PATH', '')}"
         if hasattr(os, "add_dll_directory"):
-            os.add_dll_directory(str(vlc_dir))
+            try:
+                os.add_dll_directory(str(_folder))
+            except Exception:
+                pass
+        _plugins = _folder / "plugins"
+        if _plugins.is_dir():
+            os.environ["PYTHON_VLC_MODULE_PATH"] = str(_plugins)
+        os.environ["PYTHON_VLC_LIB_PATH"] = str(_lib)
         break
 
 try:
@@ -52,7 +73,7 @@ import convert  # noqa: E402
 
 TRANSLATIONS = {
     "English": {
-        "app_title": "Media Audio Studio",
+        "app_title": "ClipCraft Studio",
         "subtitle": "Choose one audio/video file or a folder, pick the output format, then run conversion with cover art.",
         "language": "Language",
         "choose_file": "Choose File",
@@ -109,7 +130,7 @@ TRANSLATIONS = {
         "forward_10": "+10s",
         "speed": "Speed",
         "volume": "Volume",
-        "vlc_missing": "Install VLC Media Player to play files inside the app.",
+        "vlc_missing": "Direct Media Engine is required for in-app video playback.",
         "open_source": "Open Source",
         "open_output": "Open Output",
         "timeline": "Timeline",
@@ -162,13 +183,17 @@ TRANSLATIONS = {
         "mode_original": "original format",
         "about": "About",
         "developer_credit": "Developer: ahmed elshazly | Elshazly.gsm@gmail.com",
-        "about_title": "About Media Audio Studio",
+        "about_title": "About ClipCraft Studio",
         "about_desc": "All-in-one audio and video conversion studio with metadata and cover art support.",
         "about_developer_header": "Developer Information",
         "about_developer_name": "Developer: ahmed elshazly",
         "about_developer_email": "Email: Elshazly.gsm@gmail.com",
         "copy_email": "Copy Email",
         "close": "Close",
+        "settings_btn": "⚙️ Settings",
+        "settings_title": "ClipCraft Studio — Settings & Preferences",
+        "check_updates": "Check for Updates",
+        "checking_updates": "Checking for updates...",
         "caption_group": "Auto Caption & Speech-to-Text",
         "open_caption_studio": "🎙️ Auto Caption / Transcribe",
         "caption_studio_title": "Auto Caption & Speech-to-Text Studio",
@@ -350,7 +375,7 @@ TRANSLATIONS = {
         "fade_out_label": "Fade Out (sec):",
     },
     "العربية": {
-        "app_title": "استوديو الصوت والوسائط",
+        "app_title": "كليب كرافت ستوديو (ClipCraft)",
         "subtitle": "اختار ملف صوت/فيديو أو فولدر، حدد صيغة الخروج، وبعدها شغل التحويل مع صورة الغلاف.",
         "language": "اللغة",
         "choose_file": "اختيار ملف",
@@ -390,7 +415,7 @@ TRANSLATIONS = {
         "forward_10": "+10ث",
         "speed": "السرعة",
         "volume": "الصوت",
-        "vlc_missing": "ثبت VLC Media Player لتشغيل الملفات داخل البرنامج.",
+        "vlc_missing": "محرك المعاينة المباشرة مطلوب لتشغيل الفيديو داخل البرنامج.",
         "open_source": "فتح المصدر",
         "open_output": "فتح الخرج",
         "timeline": "الشريط الزمني",
@@ -443,13 +468,17 @@ TRANSLATIONS = {
         "mode_original": "نفس الصيغة",
         "about": "عن البرنامج",
         "developer_credit": "المطور: ahmed elshazly | Elshazly.gsm@gmail.com",
-        "about_title": "حول Media Audio Studio",
+        "about_title": "حول ClipCraft Studio",
         "about_desc": "برنامج شامل لتحويل ومعالجة الصوتيات والفيديو وضغط الوسائط وإضافة صور الأغلفة.",
         "about_developer_header": "بيانات المطور",
         "about_developer_name": "المطور: ahmed elshazly",
         "about_developer_email": "البريد الإلكتروني: Elshazly.gsm@gmail.com",
         "copy_email": "نسخ الإيميل",
         "close": "إغلاق",
+        "settings_btn": "⚙️ الإعدادات",
+        "settings_title": "ClipCraft Studio — إعدادات البرنامج والتفضيلات",
+        "check_updates": "التحقق من التحديثات",
+        "checking_updates": "جاري التحقق من التحديثات...",
         "caption_group": "التفريغ الصوتي والترجمة التلقائية",
         "open_caption_studio": "🎙️ تفريغ الصوت والترجمة",
         "caption_studio_title": "استوديو تفريغ الصوت والترجمة التلقائية",
@@ -814,6 +843,17 @@ from video_studio.session_manager import (
     has_recoverable_session,
     mark_clean_exit,
     clear_autosave,
+    save_project_file,
+    load_project_file,
+    get_recent_projects,
+    get_recent_media,
+    add_recent_media,
+)
+from video_studio.license_manager import (
+    check_license_status,
+    activate_license_key,
+    ActivationDialog,
+    get_hardware_id,
 )
 from ui_modules import (
     MasterExportMixin,
@@ -838,9 +878,16 @@ class SongCoverApp(
 ):
     def __init__(self):
         super().__init__()
-        self.title("Media Audio Studio")
+        self.title("ClipCraft Studio")
         self.geometry("1280x820")
         self.minsize(1050, 680)
+
+        try:
+            ico_path = APP_DIR / "app_icon.ico"
+            if ico_path.exists():
+                self.iconbitmap(str(ico_path))
+        except Exception:
+            pass
 
         self.messages = queue.Queue()
         self.worker = None
@@ -1016,11 +1063,14 @@ class SongCoverApp(
         self.bubble_search_var = tk.StringVar(value="")
         self.bubble_search_var.trace_add("write", lambda *_: self._on_bubble_search_changed())
         self.bubble_card_widgets = []
+        self.current_project_file = None
+        self.export_encoder_key = "auto"
+        self.export_encoder_combo_var = tk.StringVar(value="")
 
         # Video Branding, Aspect Ratio & DaVinci Reels Transform state
         self.video_branding_config = self.settings.get("video_branding_config", {
             "aspect_ratio": "original",
-            "fit_mode": "crop",
+            "fit_mode": "fit",
             "video_zoom": 1.0,
             "video_pan_x": 0.0,
             "video_pan_y": 0.0,
@@ -1031,7 +1081,7 @@ class SongCoverApp(
             "logo_path": "",
             "logo_position": "top_right",
             "logo_scale": 0.15,
-            "logo_opacity": 0.85,
+            "logo_opacity": 1.0,
             "title_enabled": False,
             "title_text": "",
             "title_position": "top",
@@ -1124,6 +1174,8 @@ class SongCoverApp(
         self.protocol("WM_DELETE_WINDOW", self.close_app)
         self.after(100, self._drain_messages)
         self.after(350, self._check_and_prompt_crash_recovery)
+        self.after(450, self._check_and_enforce_license)
+        self.after(3500, self._startup_update_check)
 
         # Ensure window is brought to foreground upon launch
         try:
@@ -1139,6 +1191,8 @@ class SongCoverApp(
 
     def _prewarm_vlc(self):
         try:
+            if vlc is None:
+                return
             if self.vlc_instance is None:
                 self.vlc_instance = vlc.Instance("--no-video-title-show", "--no-plugins-cache", "--quiet", "--no-stats")
             if self.media_player is None and self.vlc_instance:
@@ -1162,7 +1216,7 @@ class SongCoverApp(
                 self.video_branding_config["logo_x"] = l0.get("x", 0.82)
                 self.video_branding_config["logo_y"] = l0.get("y", 0.04)
                 self.video_branding_config["logo_scale"] = l0.get("scale", 0.16)
-                self.video_branding_config["logo_opacity"] = l0.get("opacity", 0.85)
+                self.video_branding_config["logo_opacity"] = l0.get("opacity", 1.0)
                 self.video_branding_config["logo_rotation"] = l0.get("rotation", 0.0)
         self.settings["last_media_dir"] = str(self.last_media_dir)
         self.settings["last_cover_dir"] = str(self.last_cover_dir)
@@ -1540,93 +1594,172 @@ class SongCoverApp(
         style.configure("Action.TButton", font=("Segoe UI", 10, "bold"), padding=(8, 4))
 
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(2, weight=1)
+        self.rowconfigure(1, weight=1)
 
-        # ------------------ Row 0: Header ------------------
-        header = ttk.Frame(self, padding=(16, 12, 16, 6))
+        # ------------------ Row 0: Sleek Integrated Top Header Bar ------------------
+        header = ttk.Frame(self, padding=(10, 6, 10, 6))
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(0, weight=1)
 
-        self.i18n_widgets["title"] = ttk.Label(header, font=("Segoe UI", 16, "bold"))
-        self.i18n_widgets["title"].grid(row=0, column=0, sticky="w")
+        hdr_left = ttk.Frame(header)
+        hdr_left.pack(side="left", fill="y")
 
-        language_box = ttk.Frame(header)
-        language_box.grid(row=0, column=1, sticky="e")
-        self.i18n_widgets["language_label"] = ttk.Label(language_box)
-        self.i18n_widgets["language_label"].grid(row=0, column=0, padx=(0, 8), sticky="e")
-        self.language_combo = ttk.Combobox(
-            language_box,
-            textvariable=self.language_var,
-            values=list(TRANSLATIONS),
-            state="readonly",
-            width=10,
+        self.i18n_widgets["title"] = ttk.Label(hdr_left, text=self.text("app_title"), font=("Segoe UI", 12, "bold"))
+        self.i18n_widgets["title"].pack(side="left", padx=(0, 10))
+
+        ttk.Separator(hdr_left, orient="vertical").pack(side="left", fill="y", padx=(0, 8))
+
+        self.choose_file_button = ttk.Button(
+            hdr_left,
+            text="📁 " + self.text("choose_file"),
+            command=self.choose_input_file,
+            style="Action.TButton",
         )
-        self.language_combo.grid(row=0, column=1, sticky="e")
-        self.language_combo.bind("<<ComboboxSelected>>", self._language_changed)
+        self.choose_file_button.pack(side="left", padx=(0, 4))
 
-        self.theme_button = ttk.Button(
-            language_box,
-            command=self.toggle_theme,
+        self.choose_folder_button = ttk.Button(
+            hdr_left,
+            text="📁 " + self.text("choose_folder"),
+            command=self.choose_input_folder,
             style="Player.TButton",
-            width=14,
         )
-        self.theme_button.grid(row=0, column=2, padx=(8, 0), sticky="e")
-        self.i18n_widgets["theme_button"] = self.theme_button
+        self.choose_folder_button.pack(side="left", padx=(0, 8))
 
-        self.about_button = ttk.Button(
-            language_box,
-            command=self.show_about_dialog,
+        self.loaded_filename_var = tk.StringVar(value="")
+        self.loaded_filename_label = ttk.Label(
+            hdr_left,
+            textvariable=self.loaded_filename_var,
+            font=("Segoe UI", 9, "bold"),
+            foreground="#2ea043",
+        )
+        self.loaded_filename_label.pack(side="left", padx=(0, 8))
+
+        self.open_input_button = ttk.Button(
+            hdr_left,
+            text="📂 المصدر" if self.language_var.get() == "العربية" else "📂 Source",
+            command=self.open_source,
             style="Player.TButton",
-            width=11,
         )
-        self.about_button.grid(row=0, column=3, padx=(8, 0), sticky="e")
-        self.i18n_widgets["about_button"] = self.about_button
+        self.open_input_button.pack(side="left", padx=(0, 3))
 
-        self.i18n_widgets["subtitle"] = ttk.Label(header, foreground="#555555")
-        self.i18n_widgets["subtitle"].grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 0))
-
-        # ------------------ Row 1: Source Selection Card ------------------
-        source_panel = ttk.LabelFrame(self, padding=(12, 8, 12, 8))
-        source_panel.grid(row=1, column=0, sticky="ew", padx=16, pady=(4, 6))
-        source_panel.columnconfigure(2, weight=1)
-        self.i18n_widgets["source_group"] = source_panel
-
-        self.choose_file_button = ttk.Button(source_panel, command=self.choose_input_file)
-        self.choose_file_button.grid(row=0, column=0, sticky="w")
-        self.choose_folder_button = ttk.Button(source_panel, command=self.choose_input_folder)
-        self.choose_folder_button.grid(row=0, column=1, padx=(6, 0), sticky="w")
-        ttk.Label(source_panel, textvariable=self.source_var, font=("Segoe UI", 9, "bold")).grid(
-            row=0, column=2, padx=(10, 8), sticky="ew"
-        )
-
-        self.open_input_button = ttk.Button(source_panel, command=self.open_source, style="Player.TButton")
-        self.open_input_button.grid(row=0, column=3, padx=(4, 0), sticky="e")
         self.open_output_button = ttk.Button(
-            source_panel, command=lambda: self.open_folder(self.output_dir), style="Player.TButton"
+            hdr_left,
+            text="📁 المخرجات" if self.language_var.get() == "العربية" else "📁 Output",
+            command=lambda: self.open_folder(self.output_dir),
+            style="Player.TButton",
         )
-        self.open_output_button.grid(row=0, column=4, padx=(4, 0), sticky="e")
+        self.open_output_button.pack(side="left", padx=(0, 3))
+
         self.restore_session_button = ttk.Button(
-            source_panel,
-            text="🔄 استعادة آخر جلسة" if self.language_var.get() == "العربية" else "🔄 Restore Session",
+            hdr_left,
+            text="🔄 استعادة" if self.language_var.get() == "العربية" else "🔄 Restore",
             command=self._manual_restore_session,
             style="Player.TButton",
         )
-        self.restore_session_button.grid(row=0, column=5, padx=(4, 0), sticky="e")
+        self.restore_session_button.pack(side="left", padx=(0, 6))
 
-        self.i18n_widgets["output_label"] = ttk.Label(source_panel)
-        self.i18n_widgets["output_label"].grid(row=1, column=0, sticky="w", pady=(6, 0))
-        self.output_val_label = ttk.Label(source_panel, textvariable=self.output_var, foreground="#555555")
-        self.output_val_label.grid(
-            row=1, column=2, padx=(10, 8), pady=(6, 0), sticky="ew"
-        )
-        self.count_label = ttk.Label(source_panel, textvariable=self.count_var, foreground="#0066cc", font=("Segoe UI", 9, "bold"))
-        self.count_label.grid(
-            row=1, column=3, columnspan=2, padx=(4, 0), pady=(6, 0), sticky="e"
-        )
+        hdr_right = ttk.Frame(header)
+        hdr_right.pack(side="right", fill="y")
 
-        # ------------------ Row 2: Tabs Container (Notebook) ------------------
+        self.settings_button = ttk.Button(
+            hdr_right,
+            command=self.show_settings_dialog,
+            style="Player.TButton",
+            width=11,
+        )
+        self.settings_button.pack(side="right", padx=(4, 0))
+        self.i18n_widgets["settings_button"] = self.settings_button
+
+        self.about_button = ttk.Button(
+            hdr_right,
+            command=self.show_about_dialog,
+            style="Player.TButton",
+            width=9,
+        )
+        self.about_button.pack(side="right", padx=(4, 0))
+        self.i18n_widgets["about_button"] = self.about_button
+
+        self.theme_button = ttk.Button(
+            hdr_right,
+            command=self.toggle_theme,
+            style="Player.TButton",
+            width=12,
+        )
+        self.theme_button.pack(side="right", padx=(4, 0))
+        self.i18n_widgets["theme_button"] = self.theme_button
+
+        self.language_combo = ttk.Combobox(
+            hdr_right,
+            textvariable=self.language_var,
+            values=list(TRANSLATIONS),
+            state="readonly",
+            width=9,
+        )
+        self.language_combo.pack(side="right", padx=(4, 0))
+        self.language_combo.bind("<<ComboboxSelected>>", self._language_changed)
+
+        self.i18n_widgets["language_label"] = ttk.Label(hdr_right)
+        self.i18n_widgets["language_label"].pack(side="right", padx=(8, 2))
+
+        is_ar = (self.language_var.get() == "العربية")
+
+        # Compact Shortcuts & Guide Button next to Language
+        self.btn_shortcuts_guide = ttk.Button(
+            hdr_right,
+            text="💡 الاختصارات" if is_ar else "💡 Keys",
+            command=self.open_shortcuts_guide_dialog,
+            style="Player.TButton",
+            width=11,
+        )
+        self.btn_shortcuts_guide.pack(side="right", padx=(6, 2))
+
+        ttk.Separator(hdr_right, orient="vertical").pack(side="right", fill="y", padx=(6, 6))
+
+        # Project Management Controls (Save, Open, Recent) in Top Bar
+        self.btn_recent_proj = ttk.Button(
+            hdr_right,
+            text="🕒 الأخيرة" if is_ar else "🕒 Recent",
+            command=self.show_recent_projects_popup,
+            style="Player.TButton",
+        )
+        self.btn_recent_proj.pack(side="right", padx=(2, 0))
+
+        self.btn_open_proj = ttk.Button(
+            hdr_right,
+            text="📂 فتح" if is_ar else "📂 Open",
+            command=self.open_project,
+            style="Player.TButton",
+        )
+        self.btn_open_proj.pack(side="right", padx=(2, 0))
+
+        self.btn_save_proj = ttk.Button(
+            hdr_right,
+            text="💾 حفظ" if is_ar else "💾 Save",
+            command=self.save_project,
+            style="Player.TButton",
+        )
+        self.btn_save_proj.pack(side="right", padx=(2, 0))
+
+        # License / Trial Status Indicator Button
+        self.btn_license_trial = ttk.Button(
+            hdr_right,
+            text="👑 الترخيص" if is_ar else "👑 License",
+            command=self._show_license_dialog,
+            style="Player.TButton",
+        )
+        self.btn_license_trial.pack(side="right", padx=(2, 6))
+
+        # Hidden backward-compatibility holders for existing variable bindings
+        self.i18n_widgets["subtitle"] = ttk.Label(self)
+        _dummy_source_panel = ttk.LabelFrame(self)
+        self.i18n_widgets["source_group"] = _dummy_source_panel
+        self.i18n_widgets["output_label"] = ttk.Label(_dummy_source_panel)
+        self.output_val_label = ttk.Label(_dummy_source_panel, textvariable=self.output_var)
+        self.count_label = ttk.Label(_dummy_source_panel, textvariable=self.count_var)
+
+        # ------------------ Row 1: Tabs Container (Notebook) ------------------
         self.notebook = ttk.Notebook(self)
-        self.notebook.grid(row=2, column=0, sticky="nsew", padx=16, pady=(0, 6))
+        self.notebook.grid(row=1, column=0, sticky="nsew", padx=8, pady=(2, 6))
 
         self.tab_convert = ttk.Frame(self.notebook, padding=12)
         self.tab_volume = ttk.Frame(self.notebook, padding=12)
@@ -1650,9 +1783,33 @@ class SongCoverApp(
         self._build_tab_caption(self.tab_caption)
         self._build_tab_youtube(self.tab_youtube)
 
-        # Fullscreen & Player Shortcuts
-        self.bind("<Escape>", lambda _e: self._exit_video_fullscreen(), add="+")
-        self.bind("<F11>", lambda _e: self.toggle_video_size(), add="+")
+        # Tab Selection Monitor (Ensures canvas renders immediately when switching to Video tab)
+        self.notebook.bind("<<NotebookTabChanged>>", self._on_notebook_tab_changed, add="+")
+
+        # Far-Right Dedicated Export Placed on Notebook Tab Bar
+        self.btn_export_mode = ttk.Button(
+            self.notebook,
+            text="🚀 تصدير الفيديو" if is_ar else "🚀 Export Video",
+            command=self._toggle_export_context,
+            style="Action.TButton",
+        )
+        self.btn_export_mode.place(in_=self.notebook, relx=1.0, rely=0.0, x=-6, y=2, anchor="ne")
+        self.btn_export_mode.lift()
+
+        self.notebook.bind(
+            "<Configure>",
+            lambda _e: hasattr(self, "btn_export_mode") and self.btn_export_mode.lift(),
+            add="+",
+        )
+
+        # Keyboard Shortcuts (Ctrl+S, Ctrl+Shift+S, Ctrl+O, F12, Escape, F11)
+        self.bind("<Control-s>", lambda e: self._handle_save_project_event(e), add="+")
+        self.bind("<Control-S>", lambda e: self._handle_save_project_event(e, save_as=True), add="+")
+        self.bind("<Control-o>", lambda e: self._handle_open_project_event(e), add="+")
+        self.bind("<Control-O>", lambda e: self._handle_open_project_event(e), add="+")
+        self.bind("<F12>", lambda _e: self.capture_current_frame_snapshot(), add="+")
+        self.bind("<Escape>", lambda _e: self._handle_app_escape(), add="+")
+        self.bind("<F11>", lambda _e: self.toggle_app_fullscreen(), add="+")
 
         # ------------------ Row 3: Bottom Panel (Progress & Log) ------------------
         bottom_box = ttk.Frame(self, padding=(16, 0, 16, 10))
@@ -1665,7 +1822,17 @@ class SongCoverApp(
 
         ttk.Label(prog_row, textvariable=self.progress_var, font=("Segoe UI", 9)).grid(row=0, column=0, sticky="w")
         self.progress = ttk.Progressbar(prog_row, mode="indeterminate")
-        self.progress.grid(row=0, column=1, padx=(12, 0), sticky="ew")
+        self.progress.grid(row=0, column=1, padx=(12, 8), sticky="ew")
+
+        is_ar = (self.language_var.get() == "العربية")
+        self.btn_cancel_progress = ttk.Button(
+            prog_row,
+            text="🛑 إلغاء" if is_ar else "🛑 Cancel",
+            command=self.cancel_current_operation,
+            style="Player.TButton",
+        )
+        self.btn_cancel_progress.grid(row=0, column=2, sticky="e")
+        self.btn_cancel_progress.grid_remove()
 
         log_frame = ttk.LabelFrame(bottom_box, padding=(8, 4, 8, 6))
         log_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(2, 4))
@@ -1767,6 +1934,9 @@ class SongCoverApp(
         self.bind("<Control-d>", lambda _e: self.toggle_theme(), add="+")
         self.bind("<Control-D>", lambda _e: self.toggle_theme(), add="+")
         self._apply_theme()
+
+        # Standard Maximized Window Mode (Taskbar always visible, no auto-fullscreen)
+        self.after(150, self._init_app_window_mode)
 
     def _build_tab_convert(self, parent):
         parent.columnconfigure(0, weight=1)
@@ -1930,8 +2100,8 @@ class SongCoverApp(
         self.nle_v_paned.grid(row=0, column=0, sticky="nsew")
 
         top_workspace = ttk.Frame(self.nle_v_paned)
-        top_workspace.columnconfigure(0, weight=7)
-        top_workspace.columnconfigure(1, weight=4, minsize=380)
+        top_workspace.columnconfigure(0, weight=8)
+        top_workspace.columnconfigure(1, weight=3, minsize=350)
         top_workspace.rowconfigure(0, weight=1)
 
         # ---------------- Left Column: DaVinci Cinema Viewer Stage ----------------
@@ -1998,7 +2168,7 @@ class SongCoverApp(
 
         self.studio_toggle_btn = ttk.Button(
             viewer_topbar,
-            text=("📺 مشغل VLC الخام" if is_ar else "📺 Raw VLC"),
+            text=("🎨 استوديو المونتاج" if is_ar else "🎨 Studio Preview"),
             command=self.toggle_studio_view,
             style="Player.TButton",
         )
@@ -2008,6 +2178,7 @@ class SongCoverApp(
         self.video_surface = tk.Frame(player_panel, bg="black")
         self.video_surface.grid(row=1, column=0, sticky="nsew")
         self.video_surface.bind("<Double-Button-1>", lambda _e: self.toggle_video_size())
+        self.video_surface.grid_remove()
 
         self.player_studio_canvas = tk.Canvas(player_panel, bg="#090c12", highlightthickness=0)
         self.player_studio_canvas.grid(row=1, column=0, sticky="nsew")
@@ -2113,13 +2284,14 @@ class SongCoverApp(
         # Row 0: Quick-Add Overlay Palette (adds at current playhead on V3/V2/V4)
         add_palette = ttk.Frame(inspector_panel)
         add_palette.grid(row=0, column=0, sticky="ew", pady=(0, 3))
+        self.add_palette = add_palette
         for c_i in range(4):
             add_palette.columnconfigure(c_i, weight=1)
 
         self.btn_pal_txt = ttk.Button(
             add_palette,
-            text="📝 + نص" if is_ar else "📝 + Text",
-            command=lambda: self._nle_add_element("text"),
+            text="📝 نص" if is_ar else "📝 Text",
+            command=self._open_text_settings,
             style="Player.TButton",
         )
         self.btn_pal_txt.grid(row=0, column=0, sticky="ew", padx=(0, 2))
@@ -2151,6 +2323,7 @@ class SongCoverApp(
         # Row 1: Tool Context Switcher Bar (clicking any tool shows ONLY its settings in the single slot below)
         ctx_bar = ttk.Frame(inspector_panel)
         ctx_bar.grid(row=1, column=0, sticky="ew", pady=(0, 4))
+        self.ctx_bar = ctx_bar
         for c_i in range(6):
             ctx_bar.columnconfigure(c_i, weight=1)
 
@@ -2202,7 +2375,7 @@ class SongCoverApp(
         )
         self.btn_ctx_subs.grid(row=0, column=5, sticky="ew", padx=(1, 0))
 
-        # Row 2: Single Dynamic Context-Sensitive Inspector Host (with smooth scroll & mousewheel support)
+        # Row 2: Single Dynamic Context-Sensitive Inspector Host (Clean, static layout without scrolling)
         self.inspector_host_wrapper = ttk.Frame(inspector_panel)
         self.inspector_host_wrapper.grid(row=2, column=0, sticky="nsew", pady=(0, 2))
         self.inspector_host_wrapper.columnconfigure(0, weight=1)
@@ -2211,9 +2384,8 @@ class SongCoverApp(
         self.inspector_canvas = tk.Canvas(self.inspector_host_wrapper, highlightthickness=0, bg="#161b22", bd=0)
         self.inspector_canvas.grid(row=0, column=0, sticky="nsew")
 
+        # Scrollbar hidden as inspector elements fit cleanly without scrolling
         self.inspector_scroll = ttk.Scrollbar(self.inspector_host_wrapper, orient="vertical", command=self.inspector_canvas.yview)
-        self.inspector_scroll.grid(row=0, column=1, sticky="ns")
-        self.inspector_canvas.configure(yscrollcommand=self.inspector_scroll.set)
 
         self.dynamic_inspector_host = ttk.Frame(self.inspector_canvas)
         self.dynamic_inspector_host_id = self.inspector_canvas.create_window((0, 0), window=self.dynamic_inspector_host, anchor="nw")
@@ -2225,25 +2397,10 @@ class SongCoverApp(
 
         def _on_insp_host_cfg(_e):
             self.inspector_canvas.configure(scrollregion=self.inspector_canvas.bbox("all"))
+            self.inspector_canvas.yview_moveto(0.0)
 
         self.inspector_canvas.bind("<Configure>", _on_insp_canvas_cfg)
         self.dynamic_inspector_host.bind("<Configure>", _on_insp_host_cfg)
-
-        def _on_insp_wheel(event):
-            delta = getattr(event, "delta", 0)
-            if not delta:
-                return
-            scroll_units = int(-1 * (delta / 120))
-            self.inspector_canvas.yview_scroll(scroll_units, "units")
-
-        def _bind_insp_wheel(_e):
-            self.bind_all("<MouseWheel>", _on_insp_wheel)
-
-        def _unbind_insp_wheel(_e):
-            self.unbind_all("<MouseWheel>")
-
-        self.inspector_host_wrapper.bind("<Enter>", _bind_insp_wheel)
-        self.inspector_host_wrapper.bind("<Leave>", _unbind_insp_wheel)
 
         # ---------------- Context 1: Video Framing, Numeric Transform & Selected Clip ----------------
         self.ctx_frame_video = ttk.Frame(self.dynamic_inspector_host)
@@ -2517,17 +2674,44 @@ class SongCoverApp(
         )
         self.chk_clip_mute.grid(row=0, column=5)
 
+        # Selected Clip Audio Fade In, Fade Out & Noise Reduction (clip_row3)
         clip_row3 = ttk.Frame(self.clip_fx_group)
-        clip_row3.grid(row=2, column=0, columnspan=6, sticky="ew", pady=(3, 1))
-        clip_row3.columnconfigure(0, weight=1)
+        clip_row3.grid(row=2, column=0, columnspan=6, sticky="ew", pady=(3, 0))
+        clip_row3.columnconfigure(1, weight=1)
+        clip_row3.columnconfigure(3, weight=1)
 
-        self.btn_export_this_clip = ttk.Button(
-            clip_row3,
-            text="🚀 تصدير هذا المقطع المحدد فقط" if is_ar else "🚀 Export This Selected Clip Only",
-            command=self.export_selected_clip_only,
-            style="Action.TButton",
+        self.lbl_clip_fade_in = ttk.Label(clip_row3, text="تلاشي دخولs:" if is_ar else "Fade In s:")
+        self.lbl_clip_fade_in.grid(row=0, column=0, sticky="w")
+        self.clip_fade_in_var = tk.StringVar(value="0.00")
+        self.clip_fade_in_spin = tk.Spinbox(
+            clip_row3, from_=0.0, to=15.0, increment=0.25, format="%.2f",
+            textvariable=self.clip_fade_in_var, width=5, font=("Consolas", 8),
+            command=self._on_clip_audio_fade_changed,
         )
-        self.btn_export_this_clip.grid(row=0, column=0, sticky="ew")
+        self.clip_fade_in_spin.grid(row=0, column=1, sticky="ew", padx=(2, 4))
+        self.clip_fade_in_spin.bind("<Return>", self._on_clip_audio_fade_changed)
+        self.clip_fade_in_spin.bind("<FocusOut>", self._on_clip_audio_fade_changed)
+
+        self.lbl_clip_fade_out = ttk.Label(clip_row3, text="خروجs:" if is_ar else "Fade Out s:")
+        self.lbl_clip_fade_out.grid(row=0, column=2, sticky="w")
+        self.clip_fade_out_var = tk.StringVar(value="0.00")
+        self.clip_fade_out_spin = tk.Spinbox(
+            clip_row3, from_=0.0, to=15.0, increment=0.25, format="%.2f",
+            textvariable=self.clip_fade_out_var, width=5, font=("Consolas", 8),
+            command=self._on_clip_audio_fade_changed,
+        )
+        self.clip_fade_out_spin.grid(row=0, column=3, sticky="ew", padx=(2, 4))
+        self.clip_fade_out_spin.bind("<Return>", self._on_clip_audio_fade_changed)
+        self.clip_fade_out_spin.bind("<FocusOut>", self._on_clip_audio_fade_changed)
+
+        self.clip_denoise_var = tk.BooleanVar(value=False)
+        self.chk_clip_denoise = ttk.Checkbutton(
+            clip_row3,
+            text="🧹 تنقية" if is_ar else "🧹 Denoise",
+            variable=self.clip_denoise_var,
+            command=self._on_clip_denoise_toggled,
+        )
+        self.chk_clip_denoise.grid(row=0, column=4, padx=(2, 0))
 
         # ---------------- Context 2: Selected Overlay Properties (V4 Logo / V3 Text+ / V2 Icon & Image) ----------------
         self.item_prop_card = ttk.LabelFrame(self.dynamic_inspector_host, padding=(7, 5, 7, 5))
@@ -3077,16 +3261,39 @@ class SongCoverApp(
         self.trim_button = ttk.Button(trim_act_row, command=self.start_trim, style="Action.TButton")
         self.trim_button.grid(row=0, column=1, sticky="e")
 
-        # ---------------- Row 3: Modular All-in-One / Selective Export Card ----------------
-        export_card = ttk.LabelFrame(inspector_panel, padding=(7, 3, 7, 5))
-        export_card.grid(row=3, column=0, sticky="ew")
-        export_card.columnconfigure(0, weight=1)
-        self.i18n_widgets["master_export_card"] = export_card
-        self.master_export_frame = export_card
+        # ---------------- Context 7: Modular Master Video Export ----------------
+        self.ctx_frame_export = ttk.LabelFrame(
+            self.dynamic_inspector_host,
+            text="🚀 إعدادات وتصدير الفيديو" if is_ar else "🚀 Export Video Studio",
+            padding=(8, 6, 8, 6),
+        )
+        self.ctx_frame_export.grid(row=0, column=0, sticky="nsew")
+        self.ctx_frame_export.columnconfigure(0, weight=1)
+        self.master_export_frame = self.ctx_frame_export
+        self.i18n_widgets["master_export_card"] = self.ctx_frame_export
+
+        # Back Navigation Row inside export context
+        exp_nav_bar = ttk.Frame(self.ctx_frame_export)
+        exp_nav_bar.grid(row=0, column=0, sticky="ew", pady=(0, 4))
+        exp_nav_bar.columnconfigure(0, weight=1)
+        self.lbl_exp_ctx_title = ttk.Label(
+            exp_nav_bar,
+            text="🎬 تجهيز وإعداد التصدير النهائي" if is_ar else "🎬 Final Export Setup",
+            font=("Segoe UI", 9, "bold"),
+            foreground="#2ea043",
+        )
+        self.lbl_exp_ctx_title.grid(row=0, column=0, sticky="w")
+        self.btn_exp_back = ttk.Button(
+            exp_nav_bar,
+            text="⬅ عودة للإعدادات" if is_ar else "⬅ Back to Settings",
+            command=self._back_from_export,
+            style="Player.TButton",
+        )
+        self.btn_exp_back.grid(row=0, column=1, sticky="e")
 
         # Selective Export Checkboxes (choose 1, 2, or ALL edits!)
-        exp_hdr = ttk.Frame(export_card)
-        exp_hdr.grid(row=0, column=0, sticky="ew")
+        exp_hdr = ttk.Frame(self.ctx_frame_export)
+        exp_hdr.grid(row=1, column=0, sticky="ew", pady=(2, 2))
         exp_hdr.columnconfigure(0, weight=1)
         self.lbl_exp_pick = ttk.Label(
             exp_hdr,
@@ -3095,12 +3302,12 @@ class SongCoverApp(
         )
         self.lbl_exp_pick.grid(row=0, column=0, sticky="w")
         self.btn_exp_all = ttk.Button(
-            exp_hdr, text="الكل" if is_ar else "All", width=4, style="Player.TButton",
+            exp_hdr, text="الكل" if is_ar else "All", width=5, style="Player.TButton",
             command=lambda: self._set_all_export_toggles(True),
         )
         self.btn_exp_all.grid(row=0, column=1, padx=(2, 2))
         self.btn_exp_none = ttk.Button(
-            exp_hdr, text="يدوي" if is_ar else "None", width=4, style="Player.TButton",
+            exp_hdr, text="يدوي" if is_ar else "None", width=5, style="Player.TButton",
             command=lambda: self._set_all_export_toggles(False),
         )
         self.btn_exp_none.grid(row=0, column=2, padx=(0, 2))
@@ -3114,16 +3321,23 @@ class SongCoverApp(
             command=self._toggle_export_card_collapse,
         )
         self.btn_exp_collapse.grid(row=0, column=3)
-        exp_scope_row = ttk.Frame(export_card)
-        exp_scope_row.grid(row=1, column=0, sticky="ew", pady=(1, 2))
-        self.exp_scope_row = exp_scope_row
-        exp_scope_row.columnconfigure(0, weight=1)
-        exp_scope_row.columnconfigure(1, weight=1)
+
+        exp_scope_group = ttk.LabelFrame(
+            self.ctx_frame_export,
+            text="🎯 نوع ونطاق التصدير المطلـوب:" if is_ar else "🎯 Export Scope & Target:",
+            padding=(8, 6, 8, 6),
+        )
+        exp_scope_group.grid(row=2, column=0, sticky="ew", pady=(4, 5))
+        self.exp_scope_group = exp_scope_group
+        self.exp_scope_row = exp_scope_group
+        exp_scope_group.columnconfigure(0, weight=1)
+        exp_scope_group.columnconfigure(1, weight=1)
+        exp_scope_group.columnconfigure(2, weight=1)
 
         self.export_scope_var = tk.StringVar(value="all")
         self.rdo_scope_all = ttk.Radiobutton(
-            exp_scope_row,
-            text="🎬 كامل الشريط (كل المقاطع)" if is_ar else "🎬 Entire Sequence",
+            exp_scope_group,
+            text="🎬 كامل المشروع (فيديو مدمج)" if is_ar else "🎬 Full Sequence (Single Video)",
             variable=self.export_scope_var,
             value="all",
             command=self._on_export_scope_changed,
@@ -3131,16 +3345,29 @@ class SongCoverApp(
         self.rdo_scope_all.grid(row=0, column=0, sticky="w", padx=(2, 4))
 
         self.rdo_scope_sel = ttk.Radiobutton(
-            exp_scope_row,
+            exp_scope_group,
             text="🎞️ المقطع المحدد فقط" if is_ar else "🎞️ Selected Clip Only",
             variable=self.export_scope_var,
             value="selected",
             command=self._on_export_scope_changed,
         )
-        self.rdo_scope_sel.grid(row=0, column=1, sticky="w")
+        self.rdo_scope_sel.grid(row=0, column=1, sticky="w", padx=4)
 
-        exp_checks = ttk.Frame(export_card)
-        exp_checks.grid(row=2, column=0, sticky="ew", pady=(1, 2))
+        self.rdo_scope_sep = ttk.Radiobutton(
+            exp_scope_group,
+            text="📂 كل مقطع في ملف منفصل" if is_ar else "📂 Each Clip Separately",
+            variable=self.export_scope_var,
+            value="separate",
+            command=self._on_export_scope_changed,
+        )
+        self.rdo_scope_sep.grid(row=0, column=2, sticky="w", padx=(4, 2))
+
+        exp_checks = ttk.LabelFrame(
+            self.ctx_frame_export,
+            text="🎛️ التعديلات المختارة للتصدير" if is_ar else "🎛️ Selective Edits to Export",
+            padding=(6, 4, 6, 4),
+        )
+        exp_checks.grid(row=3, column=0, sticky="ew", pady=(2, 4))
         self.exp_checks = exp_checks
         for ci in range(4):
             exp_checks.columnconfigure(ci, weight=1)
@@ -3194,8 +3421,12 @@ class SongCoverApp(
         self.chk_exp_transcript.grid(row=1, column=3, sticky="w")
 
         # Format & Size/Quality Row ("بنفس حجمه وبنفس صيغته أو بتغييرها")
-        exp_fmt_row = ttk.Frame(export_card)
-        exp_fmt_row.grid(row=3, column=0, sticky="ew", pady=(1, 3))
+        exp_fmt_row = ttk.LabelFrame(
+            self.ctx_frame_export,
+            text="⚙️ الصيغة وجودة الضغط" if is_ar else "⚙️ Format & Quality",
+            padding=(6, 4, 6, 4),
+        )
+        exp_fmt_row.grid(row=4, column=0, sticky="ew", pady=(2, 4))
         self.exp_fmt_row = exp_fmt_row
         exp_fmt_row.columnconfigure(1, weight=1)
         exp_fmt_row.columnconfigure(3, weight=1)
@@ -3218,23 +3449,31 @@ class SongCoverApp(
         self.export_size_combo.grid(row=0, column=3, sticky="ew", padx=(3, 0))
         self.export_size_combo.bind("<<ComboboxSelected>>", self._on_export_format_or_size_changed)
 
+        self.lbl_exp_encoder = ttk.Label(exp_fmt_row, text="المسرّع (GPU):" if is_ar else "Encoder (GPU):")
+        self.lbl_exp_encoder.grid(row=1, column=0, sticky="w", pady=(4, 0))
+        self.export_encoder_combo = ttk.Combobox(
+            exp_fmt_row, textvariable=self.export_encoder_combo_var, state="readonly", width=28,
+        )
+        self.export_encoder_combo.grid(row=1, column=1, columnspan=3, sticky="ew", padx=(3, 0), pady=(4, 0))
+        self.export_encoder_combo.bind("<<ComboboxSelected>>", self._on_export_encoder_changed)
+
         self._refresh_modular_export_combos()
 
         self.master_export_summary_label = ttk.Label(
-            export_card,
+            self.ctx_frame_export,
             textvariable=self.master_export_summary_var,
             font=("Segoe UI", 8, "italic"),
             wraplength=340,
         )
-        self.master_export_summary_label.grid(row=4, column=0, sticky="ew", pady=(0, 2))
+        self.master_export_summary_label.grid(row=5, column=0, sticky="ew", pady=(2, 4))
 
         self.btn_master_export = ttk.Button(
-            export_card,
+            self.ctx_frame_export,
             text=self.text("master_export_btn"),
             command=self.start_master_export,
             style="Action.TButton",
         )
-        self.btn_master_export.grid(row=5, column=0, sticky="ew")
+        self.btn_master_export.grid(row=6, column=0, sticky="ew", pady=(2, 2))
 
         self.nle_v_paned.add(top_workspace, minsize=295, stretch="always")
 
@@ -3249,6 +3488,7 @@ class SongCoverApp(
             on_add_element=self._nle_add_element,
             on_split_silences=self._split_silences_onto_nle_timeline,
             on_export_clip=self.export_selected_clip_only,
+            on_export_all_clips=self.export_all_clips_separately,
         )
         self.nle_v_paned.add(self.davinci_timeline, minsize=200, stretch="never")
         self.davinci_timeline.on_undo_request = self.do_app_undo
@@ -3414,31 +3654,58 @@ class SongCoverApp(
         if self._is_playing():
             self._start_media_from(src_sec, is_timeline_time=False)
         else:
-            self._show_studio_canvas()
-            self._request_fast_preview_frame(src_sec, force=True)
+            if getattr(self, "studio_live_preview_mode", False):
+                self._show_studio_canvas()
+                self._request_fast_preview_frame(src_sec, force=True)
+            else:
+                self._show_vlc_surface()
+                if self.media_player and self.media_player.get_state() not in {vlc.State.Ended, vlc.State.Error, vlc.State.Stopped}:
+                    self.media_player.set_time(int(src_sec * 1000))
 
     def capture_current_frame_snapshot(self):
         if not self.input_path or not self.input_path.is_file() or not convert.has_video_stream(self.input_path):
             messagebox.showwarning(self.text("app_title"), self.text("video_required"))
             return
-        tl_ts = self._current_timeline_seconds()
-        _idx, _c, ts = self.nle_project.timeline_to_source(tl_ts) if hasattr(self, "nle_project") else (0, None, tl_ts)
+        is_ar = self.language_var.get() == "العربية"
         out_dir = self.output_dir or (self.input_path.parent / "output")
-        color_cfg = None
-        if hasattr(self, "trim_color_var") and self.trim_color_var.get():
-            color_cfg = self.video_branding_config.get("color_config")
+        try:
+            out_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        tl_ts = self._current_timeline_seconds()
+
+        # Generate full-res composite (overlays, animations, color grading, aspect ratio)
+        img = None
+        if hasattr(self, "compose_full_res_snapshot_frame"):
+            try:
+                img = self.compose_full_res_snapshot_frame()
+            except Exception as e:
+                self._append_log(f"[Snapshot Compose Info] {e}\n")
+
+        stem = self.input_path.stem
+        ts_tag = f"{int(tl_ts // 60):02d}m{int(tl_ts % 60):02d}s"
+        default_name = f"{stem}_cover_{ts_tag}.jpg"
+        out_file = out_dir / default_name
 
         try:
-            out_png = convert.capture_video_snapshot(
-                video_path=self.input_path,
-                timestamp_sec=ts,
-                output_dir=out_dir,
-                color_config=color_cfg,
-            )
-            msg = self.text("snapshot_saved", filename=out_png.name)
+            if img is not None:
+                img.convert("RGB").save(str(out_file), "JPEG", quality=95)
+            else:
+                color_cfg = self.video_branding_config.get("color_config") if (hasattr(self, "trim_color_var") and self.trim_color_var.get()) else None
+                _idx, _c, ts = self.nle_project.timeline_to_source(tl_ts) if hasattr(self, "nle_project") else (0, None, tl_ts)
+                out_file = convert.capture_video_snapshot(
+                    video_path=self.input_path,
+                    timestamp_sec=ts,
+                    output_dir=out_dir,
+                    color_config=color_cfg,
+                )
+
+            msg = f"📸 تم حفظ صورة الغلاف عالية الدقة:\n{out_file.name}" if is_ar else f"📸 High-Res Cover Snapshot saved:\n{out_file.name}"
             self.status_var.set(msg)
-            self._append_log(f"[Snapshot] {out_png}\n")
-            messagebox.showinfo(self.text("app_title"), f"{msg}\n\n{out_png}")
+            self._append_log(f"[Cover Snapshot] {out_file}\n")
+            if hasattr(self, "davinci_timeline"):
+                self.davinci_timeline.show_hud_toast("📸 " + ("تم حفظ لقطة الغلاف الاحترافية!" if is_ar else "Cover Snapshot Saved!"))
+            messagebox.showinfo(self.text("app_title"), f"{msg}\n\n{out_file}")
         except Exception as exc:
             messagebox.showerror(self.text("app_title"), f"Snapshot failed: {exc}")
 
@@ -3653,8 +3920,34 @@ class SongCoverApp(
             self.fit_mode_map = {disp: k for k, disp in fit_vals}
             self.fit_mode_rev = {k: disp for k, disp in fit_vals}
             self.fit_mode_combo.configure(values=[d[1] for d in fit_vals])
-            cur_f = self.video_branding_config.get("fit_mode", "crop")
+            cur_f = self.video_branding_config.get("fit_mode", "fit")
             self.fit_mode_combo_var.set(self.fit_mode_rev.get(cur_f, fit_vals[0][1]))
+
+        if hasattr(self, "btn_export_mode"):
+            if getattr(self, "active_inspector_context", None) == "export":
+                self.btn_export_mode.configure(text="⬅ عودة للإعدادات" if is_ar else "⬅ Back to Settings")
+            else:
+                self.btn_export_mode.configure(text="🚀 تصدير الفيديو" if is_ar else "🚀 Export Video")
+
+        if hasattr(self, "btn_shortcuts_guide"):
+            self.btn_shortcuts_guide.configure(text="💡 الاختصارات" if is_ar else "💡 Keys")
+        if hasattr(self, "btn_save_proj"):
+            self.btn_save_proj.configure(text="💾 حفظ" if is_ar else "💾 Save")
+        if hasattr(self, "btn_open_proj"):
+            self.btn_open_proj.configure(text="📂 فتح" if is_ar else "📂 Open")
+        if hasattr(self, "btn_recent_proj"):
+            self.btn_recent_proj.configure(text="🕒 الأخيرة" if is_ar else "🕒 Recent")
+        if hasattr(self, "_check_and_enforce_license"):
+            self._check_and_enforce_license()
+
+        if hasattr(self, "exp_scope_group"):
+            self.exp_scope_group.configure(text="🎯 نوع ونطاق التصدير المطلـوب:" if is_ar else "🎯 Export Scope & Target:")
+        if hasattr(self, "rdo_scope_all"):
+            self.rdo_scope_all.configure(text="🎬 كامل المشروع (فيديو مدمج)" if is_ar else "🎬 Full Sequence (Single Video)")
+            self.rdo_scope_sel.configure(text="🎞️ المقطع المحدد فقط" if is_ar else "🎞️ Selected Clip Only")
+            self.rdo_scope_sep.configure(text="📂 كل مقطع في ملف منفصل" if is_ar else "📂 Each Clip Separately")
+        if hasattr(self, "btn_cancel_progress"):
+            self.btn_cancel_progress.configure(text="🛑 إلغاء" if is_ar else "🛑 Cancel")
 
         if hasattr(self, "btn_ctx_video"):
             self.btn_ctx_video.configure(text="🎬 فيديو" if is_ar else "🎬 Video")
@@ -3761,7 +4054,7 @@ class SongCoverApp(
         if hasattr(self, "btn_reset_cam"):
             self.btn_reset_cam.configure(text="↺ توسيط الفيديو" if is_ar else "↺ Reset Pan/Zoom")
         if hasattr(self, "btn_pal_txt"):
-            self.btn_pal_txt.configure(text="📝 + نص" if is_ar else "📝 + Text")
+            self.btn_pal_txt.configure(text="📝 نص" if is_ar else "📝 Text")
         if hasattr(self, "btn_pal_ico"):
             self.btn_pal_ico.configure(text="⭐ + أيقونة" if is_ar else "⭐ + Icon")
         if hasattr(self, "btn_pal_img"):
@@ -3780,8 +4073,8 @@ class SongCoverApp(
         if hasattr(self, "_refresh_modular_export_combos"):
             self._refresh_modular_export_combos()
         if hasattr(self, "studio_toggle_btn"):
-            if getattr(self, "studio_live_preview_mode", True):
-                self.studio_toggle_btn.configure(text="📺 مشغل VLC الخام" if is_ar else "📺 Raw VLC")
+            if getattr(self, "studio_live_preview_mode", False):
+                self.studio_toggle_btn.configure(text="📺 المعاينة المباشرة" if is_ar else "📺 Direct Preview")
             else:
                 self.studio_toggle_btn.configure(text="🎨 استوديو المونتاج" if is_ar else "🎨 Studio Preview")
         if hasattr(self, "_refresh_master_export_summary"):
@@ -3824,6 +4117,8 @@ class SongCoverApp(
         self.caption_burn_check.configure(text=self.text("caption_burn_video"))
         self.custom_cover_check.configure(text=self.text("use_custom_cover"))
 
+        if "settings_button" in self.i18n_widgets:
+            self.i18n_widgets["settings_button"].configure(text=self.text("settings_btn"))
         if "about_button" in self.i18n_widgets:
             self.i18n_widgets["about_button"].configure(text=self.text("about"))
         if "theme_button" in self.i18n_widgets:
@@ -3873,8 +4168,34 @@ class SongCoverApp(
         frame.pack(fill="both", expand=True)
 
         ver_fg = "#8b949e" if (getattr(self, "theme_var", None) and self.theme_var.get() == "dark") else "#666666"
-        ttk.Label(frame, text="Media Audio Studio", font=("Segoe UI", 15, "bold")).pack(pady=(0, 2))
-        ttk.Label(frame, text="Version 1.0.0", font=("Segoe UI", 9), foreground=ver_fg).pack(pady=(0, 8))
+        ttk.Label(frame, text="ClipCraft Studio Pro", font=("Segoe UI", 15, "bold")).pack(pady=(0, 2))
+        ttk.Label(frame, text="Version 1.0.0", font=("Segoe UI", 9), foreground=ver_fg).pack(pady=(0, 4))
+
+        # License Badge in About Dialog
+        status = check_license_status()
+        state = status.get("state", "trial")
+        is_ar = (getattr(self, "language_var", None) and self.language_var.get() == "العربية")
+        if state == "licensed":
+            lic_badge = f"👑 مرخص ومفعل رسمياً ({status.get('plan', 'PRO')})" if is_ar else f"👑 Officially Licensed ({status.get('plan', 'PRO')})"
+            lic_fg = "#3fb950"
+        elif state == "trial":
+            rem_d = status.get("remaining_days", 3)
+            lic_badge = f"⏳ نسخة تجريبية ({rem_d} أيام متبقية)" if is_ar else f"⏳ Trial Edition ({rem_d} days left)"
+            lic_fg = "#d29922"
+        else:
+            lic_badge = "🔒 الترخيص منتهي" if is_ar else "🔒 License Expired"
+            lic_fg = "#f85149"
+        ttk.Label(frame, text=lic_badge, font=("Segoe UI", 9, "bold"), foreground=lic_fg).pack(pady=(0, 8))
+
+        # Check for Updates Button right inside About dialog
+        btn_update = ttk.Button(
+            frame,
+            text="🔄 " + ("التحقق من وجود تحديثات" if is_ar else "Check for Updates"),
+            command=self.check_for_updates_interactive,
+            style="Player.TButton",
+        )
+        btn_update.pack(pady=(0, 10))
+
         ttk.Label(frame, text=self.text("about_desc"), font=("Segoe UI", 9), wraplength=380, justify="center").pack(pady=(0, 14))
 
         dev_group = ttk.LabelFrame(frame, text=self.text("about_developer_header"), padding=12)
@@ -3901,6 +4222,234 @@ class SongCoverApp(
         x = self.winfo_x() + (self.winfo_width() - dialog.winfo_width()) // 2
         y = self.winfo_y() + (self.winfo_height() - dialog.winfo_height()) // 2
         dialog.geometry(f"+{max(0, x)}+{max(0, y)}")
+
+    def show_settings_dialog(self):
+        is_ar = (getattr(self, "language_var", None) and self.language_var.get() == "العربية")
+        dialog = tk.Toplevel(self)
+        dialog.title("ClipCraft Studio — " + ("إعدادات البرنامج والتفضيلات" if is_ar else "Settings & Preferences"))
+        self._apply_theme_to_toplevel(dialog)
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.geometry("540x510")
+        dialog.minsize(500, 450)
+        dialog.resizable(False, False)
+
+        dialog.update_idletasks()
+        w, h = 540, 510
+        x = max(10, self.winfo_x() + (self.winfo_width() - w) // 2)
+        y = max(10, self.winfo_y() + (self.winfo_height() - h) // 2)
+        dialog.geometry(f"{w}x{h}+{x}+{y}")
+
+        frame = ttk.Frame(dialog, padding=16)
+        frame.pack(fill="both", expand=True)
+
+        # 1. Header
+        ttk.Label(frame, text="⚙️ " + ("إعدادات البرنامج والتفضيلات العامة" if is_ar else "Settings & Preferences"), font=("Segoe UI", 13, "bold")).pack(anchor="w", pady=(0, 12))
+
+        # 2. Updates & Maintenance Section
+        upd_group = ttk.LabelFrame(frame, text="🚀 " + ("التحديثات والصيانة" if is_ar else "Updates & Maintenance"), padding=12)
+        upd_group.pack(fill="x", pady=(0, 12))
+
+        auto_upd_var = tk.BooleanVar(value=bool(self.settings.get("check_updates_on_startup", True)))
+        chk_upd = ttk.Checkbutton(
+            upd_group,
+            text="التحقق التلقائي من وجود تحديثات عند بدء التشغيل" if is_ar else "Check for updates automatically on startup",
+            variable=auto_upd_var,
+        )
+        chk_upd.pack(anchor="w", pady=(0, 6))
+
+        last_check_ts = self.settings.get("last_update_check")
+        if last_check_ts:
+            import datetime
+            dt_str = datetime.datetime.fromtimestamp(last_check_ts).strftime("%Y-%m-%d %H:%M")
+            last_check_txt = f"آخر تحقق: {dt_str}" if is_ar else f"Last checked: {dt_str}"
+        else:
+            last_check_txt = "آخر تحقق: لم يتم بعد" if is_ar else "Last checked: Not yet"
+
+        ttk.Label(upd_group, text=last_check_txt, font=("Segoe UI", 8), foreground="#8b949e").pack(anchor="w", pady=(0, 8))
+
+        btn_chk_now = ttk.Button(
+            upd_group,
+            text="🔄 " + ("التحقق من وجود تحديثات الآن" if is_ar else "Check for Updates Now"),
+            command=self.check_for_updates_interactive,
+            style="Player.TButton",
+        )
+        btn_chk_now.pack(anchor="w")
+
+        # 3. License & Activation Section
+        lic_group = ttk.LabelFrame(frame, text="👑 " + ("الترخيص والتفعيل" if is_ar else "License & Activation"), padding=12)
+        lic_group.pack(fill="x", pady=(0, 12))
+
+        status = check_license_status()
+        state = status.get("state", "trial")
+        if state == "licensed":
+            plan = status.get("plan", "PRO")
+            days = status.get("remaining_days", 9999)
+            dur_str = "دائم مدى الحياة" if days >= 9999 else f"متبقي {days} يوم"
+            lic_summary = f"✅ مفعل رسمياً: {plan} ({dur_str})" if is_ar else f"✅ Officially Licensed: {plan} ({dur_str})"
+            lic_color = "#3fb950"
+        elif state == "trial":
+            rem_d = status.get("remaining_days", 3)
+            lic_summary = f"⏳ نسخة تجريبية: متبقي {rem_d} أيام" if is_ar else f"⏳ Trial Version: {rem_d} days remaining"
+            lic_color = "#d29922"
+        else:
+            lic_summary = "🔒 الترخيص منتهي — يلزم التفعيل" if is_ar else "🔒 License Expired — Activation Required"
+            lic_color = "#f85149"
+
+        ttk.Label(lic_group, text=lic_summary, font=("Segoe UI", 9, "bold"), foreground=lic_color).pack(anchor="w", pady=(0, 8))
+
+        def _open_lic_and_close():
+            dialog.destroy()
+            self._show_license_dialog()
+
+        btn_manage_lic = ttk.Button(
+            lic_group,
+            text="👑 " + ("إدارة الترخيص والمفتاح" if is_ar else "Manage License & Key"),
+            command=_open_lic_and_close,
+            style="Player.TButton",
+        )
+        btn_manage_lic.pack(anchor="w")
+
+        # 4. Default Output Directory Section
+        dir_group = ttk.LabelFrame(frame, text="📁 " + ("مجلد الإخراج الافتراضي" if is_ar else "Default Output Directory"), padding=12)
+        dir_group.pack(fill="x", pady=(0, 12))
+
+        dir_box = ttk.Frame(dir_group)
+        dir_box.pack(fill="x")
+
+        dir_entry_var = tk.StringVar(value=str(self.output_dir or DEFAULT_OUTPUT_DIR))
+        ent_dir = ttk.Entry(dir_box, textvariable=dir_entry_var, state="readonly")
+        ent_dir.pack(side="left", fill="x", expand=True, padx=(0, 6))
+
+        def _browse_dir():
+            chosen = filedialog.askdirectory(parent=dialog, title="Select Default Output Folder", initialdir=dir_entry_var.get())
+            if chosen:
+                dir_entry_var.set(chosen)
+
+        btn_browse = ttk.Button(dir_box, text="استعراض..." if is_ar else "Browse...", command=_browse_dir)
+        btn_browse.pack(side="right")
+
+        # 5. Dialog Bottom Buttons
+        btn_box = ttk.Frame(frame)
+        btn_box.pack(fill="x", side="bottom", pady=(8, 0))
+
+        def _save_and_close():
+            self.settings["check_updates_on_startup"] = bool(auto_upd_var.get())
+            new_out = Path(dir_entry_var.get().strip())
+            if new_out.exists() and new_out.is_dir():
+                self.output_dir = new_out
+                self.output_var.set(str(new_out))
+            self._save_settings()
+            dialog.destroy()
+
+        btn_save = ttk.Button(btn_box, text="💾 " + ("حفظ الإعدادات" if is_ar else "Save Settings"), command=_save_and_close, style="Action.TButton")
+        btn_save.pack(side="left")
+
+        btn_cancel = ttk.Button(btn_box, text="إلغاء" if is_ar else "Cancel", command=dialog.destroy, style="Player.TButton")
+        btn_cancel.pack(side="right")
+
+    # -------------------------------------------------------------------------
+    # Update Checker Engine
+    # -------------------------------------------------------------------------
+
+    def _startup_update_check(self):
+        try:
+            if not self.settings.get("check_updates_on_startup", True):
+                return
+            threading.Thread(target=self._run_background_update_check, daemon=True).start()
+        except Exception:
+            pass
+
+    def _run_background_update_check(self):
+        try:
+            from video_studio.update_manager import check_for_updates
+            res = check_for_updates(timeout=4)
+            self.settings["last_update_check"] = time.time()
+            self._save_settings()
+            if res.get("has_update"):
+                lat_v = res.get("latest_version")
+                last_notified = self.settings.get("last_update_version_notified", "")
+                if lat_v != last_notified:
+                    self.settings["last_update_version_notified"] = lat_v
+                    self._save_settings()
+                    is_ar = (getattr(self, "language_var", None) and self.language_var.get() == "العربية")
+                    self.after(0, lambda: self._show_update_dialog_popup(res, is_manual=False, is_ar=is_ar))
+        except Exception:
+            pass
+
+    def check_for_updates_interactive(self):
+        is_ar = (getattr(self, "language_var", None) and self.language_var.get() == "العربية")
+        self._append_log("🔄 " + ("جاري التحقق من التحديثات عبر الإنترنت...\n" if is_ar else "Checking for updates online...\n"))
+
+        def _worker():
+            try:
+                from video_studio.update_manager import check_for_updates
+                res = check_for_updates(timeout=6)
+                self.settings["last_update_check"] = time.time()
+                self._save_settings()
+                self.after(0, lambda: self._show_update_dialog_popup(res, is_manual=True, is_ar=is_ar))
+            except Exception as e:
+                err_text = f"تعذر التحقق من التحديثات: {e}" if is_ar else f"Could not check for updates: {e}"
+                self.after(0, lambda: messagebox.showwarning("ClipCraft Studio", err_text))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _show_update_dialog_popup(self, res, is_manual=True, is_ar=True):
+        try:
+            from video_studio.update_manager import UpdateDialog
+            UpdateDialog(self, result=res, is_manual=is_manual, is_ar=is_ar)
+        except Exception:
+            pass
+
+    # -------------------------------------------------------------------------
+    # Licensing & Activation Enforcement
+    # -------------------------------------------------------------------------
+
+    def _check_and_enforce_license(self):
+        try:
+            status = check_license_status()
+            state = status.get("state", "trial")
+            is_ar = (getattr(self, "language_var", None) and self.language_var.get() == "العربية")
+
+            if state == "licensed":
+                plan = status.get("plan", "PRO")
+                days = status.get("remaining_days", 9999)
+                if days < 9999:
+                    txt = f"👑 {plan} ({days}ي)" if is_ar else f"👑 {plan} ({days}d)"
+                else:
+                    txt = "👑 مفعل مدى الحياة" if is_ar else "👑 Lifetime Pro"
+                if hasattr(self, "btn_license_trial"):
+                    self.btn_license_trial.configure(text=txt)
+                title_tag = " [نسخة مفعلة 👑]" if is_ar else " [Licensed 👑]"
+                self.title(f"ClipCraft Studio Pro{title_tag}")
+            elif state == "trial":
+                days = status.get("remaining_days", 3)
+                txt = f"⏳ تجريبي ({days} يوم)" if is_ar else f"⏳ Trial ({days}d)"
+                if hasattr(self, "btn_license_trial"):
+                    self.btn_license_trial.configure(text=txt)
+                self.title("ClipCraft Studio Pro [فترة تجريبية ⏳]" if is_ar else "ClipCraft Studio Pro [Trial ⏳]")
+            else:
+                if hasattr(self, "btn_license_trial"):
+                    self.btn_license_trial.configure(text="🔒 انتهت التجربة" if is_ar else "🔒 Expired")
+                self.title("ClipCraft Studio Pro [انتهت التجربة 🔒]" if is_ar else "ClipCraft Studio Pro [Expired 🔒]")
+                self._show_license_dialog(is_expired=True)
+        except Exception:
+            pass
+
+    def _show_license_dialog(self, is_expired: bool = False):
+        try:
+            status = check_license_status()
+            if not is_expired and status.get("state") in ("expired", "tampered"):
+                is_expired = True
+            is_ar = (getattr(self, "language_var", None) and self.language_var.get() == "العربية")
+            ActivationDialog(self, is_expired=is_expired, on_success=self._on_license_activated, is_ar=is_ar)
+        except Exception as e:
+            is_ar = (getattr(self, "language_var", None) and self.language_var.get() == "العربية")
+            err_msg = f"تعذر فتح نافذة التفعيل: {e}" if is_ar else f"Failed to open activation dialog: {e}"
+            messagebox.showerror("ClipCraft Studio", err_msg)
+
+    def _on_license_activated(self):
+        self._check_and_enforce_license()
 
     def _refresh_enhancement_options(self):
         labels = ENHANCEMENT_LABELS[self.language_var.get()]
@@ -3953,6 +4502,27 @@ class SongCoverApp(
         widget.bind("<Button-3>", show_menu)
         widget.bind("<Control-a>", lambda _e: (widget.tag_add("sel", "1.0", "end"), "break")[-1])
 
+    def _on_notebook_tab_changed(self, _event=None):
+        if hasattr(self, "btn_export_mode"):
+            try:
+                self.btn_export_mode.lift()
+            except Exception:
+                pass
+        if not hasattr(self, "notebook") or not hasattr(self, "tab_player"):
+            return
+        try:
+            selected_tab = self.notebook.select()
+            if selected_tab == str(self.tab_player):
+                if getattr(self, "studio_live_preview_mode", True):
+                    self._show_studio_canvas()
+                    if getattr(self, "input_path", None) and self.input_path.is_file() and self.input_path.suffix.lower() in convert.VIDEO_EXTS:
+                        tl_sec = self._current_timeline_seconds() if hasattr(self, "_current_timeline_seconds") else 0.0
+                        _idx, _c, src_sec = self.nle_project.timeline_to_source(tl_sec) if hasattr(self, "nle_project") else (0, None, tl_sec)
+                        self._request_fast_preview_frame(src_sec, force=(self._cached_player_frame is None))
+                        self._render_player_studio_canvas()
+        except Exception:
+            pass
+
     def _language_changed(self, _event=None):
         self._apply_language()
         self._save_settings()
@@ -3999,38 +4569,73 @@ class SongCoverApp(
             return None
         compression = self.selected_video_compression()
         resolution = self.selected_video_resolution()
-        if compression == "Original" and resolution == "Original":
-            total_size = sum(path.stat().st_size for path in video_files if path.is_file())
-            return total_size if total_size > 0 else None
 
+        total_source_size = 0
+        valid_files = []
+        for path in video_files:
+            try:
+                if path.is_file():
+                    total_source_size += path.stat().st_size
+                    valid_files.append(path)
+            except OSError:
+                continue
+
+        if not valid_files or total_source_size <= 0:
+            return None
+
+        if compression == "Original" and resolution == "Original":
+            return total_source_size
+
+        base_ratio = {
+            "Original": 1.0,
+            "Very High": 0.88,
+            "High": 0.68,
+            "Medium": 0.48,
+            "Small": 0.28,
+            "Very Small": 0.16,
+        }.get(compression, 0.50)
+
+        res_ratio = {
+            "Original": 1.0,
+            "1080p": 1.0,
+            "720p": 0.72,
+            "480p": 0.50,
+            "360p": 0.35,
+        }.get(resolution, 1.0)
+
+        # For batches with many files (> 3), calculate instantly without spawning 50+ blocking ffprobe processes!
+        if len(valid_files) > 3:
+            combined_ratio = base_ratio * res_ratio
+            if compression != "Original":
+                combined_ratio = min(combined_ratio, base_ratio)
+            est = int(total_source_size * combined_ratio)
+            return max(est, 1024)
+
+        # For single files or very small batches (<= 3 files), use detailed model if cached or lightweight fallback
         if not hasattr(self, "_video_info_cache"):
             self._video_info_cache = {}
 
         total_est = 0
-        for path in video_files:
-            if not path.is_file():
-                continue
+        for path in valid_files:
             try:
                 cache_key = (str(path), path.stat().st_mtime)
             except OSError:
                 continue
             info = self._video_info_cache.get(cache_key)
             if not info:
-                try:
-                    dur = convert.get_media_duration(path) or 0
-                    w, h = convert.get_video_dimensions(path)
-                    sz = path.stat().st_size
-                    info = {"duration": dur, "w": w, "h": h, "size": sz}
-                    self._video_info_cache[cache_key] = info
-                except Exception:
-                    continue
-
-            dur = info["duration"]
-            if dur <= 0:
+                # Use immediate fast calculation rather than blocking the UI
+                sz = path.stat().st_size
+                total_est += int(sz * base_ratio * res_ratio)
                 continue
-            w = info["w"]
-            h = info["h"]
-            source_size = info["size"]
+
+            dur = info.get("duration", 0)
+            if dur <= 0:
+                total_est += int(info.get("size", 0) * base_ratio * res_ratio)
+                continue
+
+            w = info.get("w", 1920)
+            h = info.get("h", 1080)
+            source_size = info.get("size", 0)
 
             res_limits = {
                 "360p": (640, 360),
@@ -4059,15 +4664,7 @@ class SongCoverApp(
             crf_model_kbps = crf_1080p_kbps * pixel_scale
 
             source_kbps = (source_size * 8 / 1000) / dur if dur > 0 else 0
-            ratio = {
-                "Original": 1.0,
-                "Very High": 0.88,
-                "High": 0.68,
-                "Medium": 0.48,
-                "Small": 0.28,
-                "Very Small": 0.16,
-            }.get(compression, 0.5)
-
+            ratio = base_ratio
             if w > 0 and h > 0 and (tw * th < w * h):
                 ratio *= ((tw * th) / (w * h)) ** 0.72
 
@@ -4100,13 +4697,17 @@ class SongCoverApp(
         if not video_files:
             self.video_estimate_var.set("")
             return
-        estimate = self._estimate_video_output_size(video_files)
-        is_ar = self.language_var.get() == "العربية"
-        if estimate:
-            prefix = "الحجم التقريبي: ~" if is_ar else "Est. ~"
-            self.video_estimate_var.set(f"{prefix}{convert.human_size(estimate)}")
-        else:
-            self.video_estimate_var.set("الحجم التقريبي غير معروف" if is_ar else "Est. unknown")
+
+        is_ar = (getattr(self, "language_var", None) and self.language_var.get() == "العربية")
+        try:
+            estimate = self._estimate_video_output_size(video_files)
+            if estimate:
+                prefix = "الحجم التقريبي: ~" if is_ar else "Est. ~"
+                self.video_estimate_var.set(f"{prefix}{convert.human_size(estimate)}")
+            else:
+                self.video_estimate_var.set("الحجم التقريبي غير معروف" if is_ar else "Est. unknown")
+        except Exception:
+            self.video_estimate_var.set("")
 
     def _remember_enhancement_key(self):
         selected_label = self.enhancement_var.get()
@@ -4214,6 +4815,11 @@ class SongCoverApp(
         prev_source = self.input_path
         self.stop_playback()
         self.input_path = source_path
+        if source_path and source_path.is_file():
+            try:
+                add_recent_media(source_path)
+            except Exception:
+                pass
         output_base = source_path.parent if source_path.is_file() else source_path
         self.output_dir = output_base / "output"
         self.media_files = convert.collect_media_files(self.input_path, self.output_dir)
@@ -4280,11 +4886,25 @@ class SongCoverApp(
                 match_label = self._exp_sz_rev.get("Match Source")
                 if match_label:
                     self.export_size_combo_var.set(match_label)
+            # Reset aspect ratio to native original for fresh import
+            if hasattr(self, "video_branding_config") and isinstance(self.video_branding_config, dict):
+                self.video_branding_config["aspect_ratio"] = "original"
+                self.video_branding_config["fit_mode"] = "crop"
+            if hasattr(self, "trim_aspect_var"):
+                self.trim_aspect_var.set("original")
+            if hasattr(self, "trim_aspect_combo_var") and hasattr(self, "trim_aspect_rev"):
+                disp_orig = self.trim_aspect_rev.get("original")
+                if disp_orig:
+                    self.trim_aspect_combo_var.set(disp_orig)
+            self.apply_video_aspect_ratio()
             if hasattr(self, "_refresh_master_export_summary"):
                 self._refresh_master_export_summary()
 
         # Set UI values immediately for instant 0ms responsiveness
         self.source_var.set(str(self.input_path))
+        if hasattr(self, "loaded_filename_var"):
+            fn = self.input_path.name if (self.input_path and hasattr(self.input_path, "name")) else ""
+            self.loaded_filename_var.set(f"🎬 {fn}" if fn else "")
         self.output_var.set(str(self.output_dir))
         self.count_var.set(self.text("media_count", count=len(self.media_files)))
         self.video_count_var.set(self.text("video_count", count=len(self.video_files())))
@@ -4301,9 +4921,15 @@ class SongCoverApp(
         self.video_estimate_var.set("جاري الفحص..." if is_ar else "Probing...")
 
         if source_path.is_file() and source_path.suffix.lower() in convert.VIDEO_EXTS:
+            if hasattr(self, "notebook") and hasattr(self, "tab_player"):
+                try:
+                    self.notebook.select(self.tab_player)
+                except Exception:
+                    pass
+            self.studio_live_preview_mode = True
             self._show_studio_canvas()
             if source_changed or self._cached_player_frame is None:
-                self._request_fast_preview_frame(0.5, force=True)
+                self._request_fast_preview_frame(0.0, force=True)
             else:
                 self._render_player_studio_canvas()
         else:
@@ -4374,8 +5000,8 @@ class SongCoverApp(
             try:
                 peaks = extract_audio_waveform_peaks(
                     source_path,
-                    num_buckets=6000,
                     ffmpeg_exe=str(convert.ffmpeg_executable()),
+                    duration=dur_f,
                 )
                 if peaks and self.input_path == source_path:
                     def _apply_peaks():
@@ -4442,6 +5068,8 @@ class SongCoverApp(
         if hasattr(self, "nle_project") and self.nle_project.clips:
             c_idx, cur_c, src_sec = self.nle_project.timeline_to_source(tl_sec)
             self.active_playback_clip_idx = c_idx
+            if not self._is_playing():
+                self._show_studio_canvas()
             if cur_c is None:
                 self._render_player_studio_canvas()
             else:
@@ -4467,7 +5095,7 @@ class SongCoverApp(
             self._apply_active_clip_playback_fx(clip)
         self._refresh_timeline_text(playhead_only=True)
         if self.was_playing_before_drag and self.media_player:
-            if not getattr(self, "studio_live_preview_mode", True):
+            if not getattr(self, "studio_live_preview_mode", False):
                 self._show_vlc_surface()
             else:
                 self._show_studio_canvas()
@@ -4528,15 +5156,36 @@ class SongCoverApp(
         if not self.media_player:
             return
         try:
-            self.media_player.video_set_aspect_ratio(None)
+            ratio = self.trim_aspect_var.get() if hasattr(self, "trim_aspect_var") else "original"
+            fit_m = getattr(self, "video_branding_config", {}).get("fit_mode", "crop")
+            if ratio and ratio != "original" and fit_m == "crop":
+                self.media_player.video_set_aspect_ratio(None)
+                self.media_player.video_set_crop_geometry(ratio.encode("utf-8") if isinstance(ratio, str) else ratio)
+            else:
+                self.media_player.video_set_crop_geometry(None)
+                self.media_player.video_set_aspect_ratio(None)
         except Exception:
             pass
 
     def apply_video_color_adjustments(self, cfg=None):
         if not self.media_player:
             return
+        if cfg is None:
+            cfg = getattr(self, "video_branding_config", {}).get("color_config", {})
         try:
-            self.media_player.video_set_adjust_int(vlc.VideoAdjustOption.Enable, 0)
+            from video_studio.color_grading import is_color_neutral
+            if isinstance(cfg, dict) and cfg.get("enabled", True) and not is_color_neutral(cfg):
+                self.media_player.video_set_adjust_int(vlc.VideoAdjustOption.Enable, 1)
+                b = float(cfg.get("brightness", 0.0))
+                self.media_player.video_set_adjust_float(vlc.VideoAdjustOption.Brightness, max(0.0, min(2.0, 1.0 + b)))
+                c = float(cfg.get("contrast", 1.0))
+                self.media_player.video_set_adjust_float(vlc.VideoAdjustOption.Contrast, max(0.0, min(2.0, c)))
+                s = float(cfg.get("saturation", 1.0))
+                self.media_player.video_set_adjust_float(vlc.VideoAdjustOption.Saturation, max(0.0, min(3.0, s)))
+                g = float(cfg.get("gamma", 1.0))
+                self.media_player.video_set_adjust_float(vlc.VideoAdjustOption.Gamma, max(0.1, min(4.0, g)))
+            else:
+                self.media_player.video_set_adjust_int(vlc.VideoAdjustOption.Enable, 0)
         except Exception:
             pass
 
@@ -4712,6 +5361,48 @@ class SongCoverApp(
             self.export_opt_timeline_var.set(True)
         if self._is_playing():
             self._apply_active_clip_playback_fx()
+        if hasattr(self, "davinci_timeline"):
+            self.davinci_timeline.redraw()
+        self._refresh_master_export_summary()
+
+    def _on_clip_audio_fade_changed(self, _e=None):
+        if getattr(self, "_updating_xf_ui", False):
+            return
+        c_idx = self._get_selected_or_active_clip_idx()
+        if not hasattr(self, "nle_project") or not (0 <= c_idx < len(self.nle_project.clips)):
+            return
+        clip = self.nle_project.clips[c_idx]
+        try:
+            fin = max(0.0, min(15.0, float(self.clip_fade_in_var.get().strip() or 0.0)))
+        except ValueError:
+            fin = 0.0
+        try:
+            fout = max(0.0, min(15.0, float(self.clip_fade_out_var.get().strip() or 0.0)))
+        except ValueError:
+            fout = 0.0
+
+        if abs(fin - float(clip.get("audio_fade_in", 0.0) or 0.0)) < 0.01 and abs(fout - float(clip.get("audio_fade_out", 0.0) or 0.0)) < 0.01:
+            return
+        self.nle_project.push_undo()
+        clip["audio_fade_in"] = round(fin, 2)
+        clip["audio_fade_out"] = round(fout, 2)
+        if hasattr(self, "export_opt_timeline_var"):
+            self.export_opt_timeline_var.set(True)
+        if hasattr(self, "davinci_timeline"):
+            self.davinci_timeline.redraw()
+        self._refresh_master_export_summary()
+
+    def _on_clip_denoise_toggled(self):
+        if getattr(self, "_updating_xf_ui", False):
+            return
+        c_idx = self._get_selected_or_active_clip_idx()
+        if not hasattr(self, "nle_project") or not (0 <= c_idx < len(self.nle_project.clips)):
+            return
+        self.nle_project.push_undo()
+        clip = self.nle_project.clips[c_idx]
+        clip["audio_denoise"] = bool(self.clip_denoise_var.get())
+        if hasattr(self, "export_opt_timeline_var"):
+            self.export_opt_timeline_var.set(True)
         if hasattr(self, "davinci_timeline"):
             self.davinci_timeline.redraw()
         self._refresh_master_export_summary()
@@ -5019,6 +5710,198 @@ class SongCoverApp(
         return "break"
 
     # -------------------------------------------------------------------------
+    # Project File Management (.masproj / .json) & Recent Projects
+    # -------------------------------------------------------------------------
+    def save_project(self, save_as: bool = False):
+        """
+        Saves the current montage project, clips, overlays, branding, and color grading
+        to a portable .masproj project file.
+        """
+        is_ar = self.language_var.get() == "العربية"
+        if not getattr(self, "input_path", None) or not self.input_path.is_file():
+            messagebox.showwarning(
+                self.text("app_title"),
+                "يرجى فتح ملف وسائط أو فيديو أولاً لحفظ المشروع." if is_ar else "Please open a media file first to save a project."
+            )
+            return
+
+        target_file = getattr(self, "current_project_file", None)
+        if save_as or not target_file:
+            init_name = f"{self.input_path.stem}.ccproj"
+            init_dir = str(self.input_path.parent)
+            chosen = filedialog.asksaveasfilename(
+                title="حفظ المشروع باسم" if is_ar else "Save Project As",
+                initialdir=init_dir,
+                initialfile=init_name,
+                defaultextension=".ccproj",
+                filetypes=[
+                    ("ClipCraft Studio Project (*.ccproj, *.masproj)", "*.ccproj;*.masproj"),
+                    ("JSON Project File (*.json)", "*.json"),
+                    ("All Files (*.*)", "*.*"),
+                ],
+            )
+            if not chosen:
+                return
+            target_file = Path(chosen)
+
+        snap = self._create_app_state_snapshot("حفظ المشروع", "Save Project")
+        snap["project_name"] = target_file.stem
+        success = save_project_file(target_file, snap)
+        if success:
+            self.current_project_file = target_file
+            self.title(f"{self.text('app_title')} — [{target_file.name}]")
+            succ_msg = f"💾 تم حفظ المشروع بنجاح: {target_file.name}" if is_ar else f"💾 Project saved successfully: {target_file.name}"
+            self.status_var.set(succ_msg)
+            self._append_log(f"\n{succ_msg}\n")
+            if hasattr(self, "davinci_timeline"):
+                self.davinci_timeline.show_hud_toast("💾 " + ("تم حفظ المشروع!" if is_ar else "Project Saved!"))
+        else:
+            messagebox.showerror(
+                self.text("app_title"),
+                "حدث خطأ أثناء حفظ ملف المشروع." if is_ar else "Failed to save project file."
+            )
+
+    def open_project(self, target_path: Optional[Union[str, Path]] = None):
+        """
+        Opens and restores an existing .ccproj, .masproj or .json project file.
+        """
+        is_ar = self.language_var.get() == "العربية"
+        if not target_path:
+            chosen = filedialog.askopenfilename(
+                title="فتح مشروع مونتاج" if is_ar else "Open Project",
+                filetypes=[
+                    ("ClipCraft Studio Projects (*.ccproj, *.masproj, *.json)", "*.ccproj;*.masproj;*.json"),
+                    ("All Files (*.*)", "*.*"),
+                ],
+            )
+            if not chosen:
+                return
+            target_path = Path(chosen)
+        else:
+            target_path = Path(target_path)
+
+        if not target_path.is_file():
+            messagebox.showerror(
+                self.text("app_title"),
+                "ملف المشروع المحدد غير موجود على القرص." if is_ar else "The specified project file does not exist."
+            )
+            return
+
+        data = load_project_file(target_path)
+        if not data or not isinstance(data, dict):
+            messagebox.showerror(
+                self.text("app_title"),
+                "تعذر قراءة ملف المشروع أو أن الصيغة غير مدعومة." if is_ar else "Could not load or parse project file."
+            )
+            return
+
+        media_str = data.get("media_path", "")
+        m_path = Path(media_str) if media_str else None
+        if not m_path or not m_path.is_file():
+            # Prompt user to locate missing media
+            msg = (
+                f"⚠️ تعذر العثور تلقائياً على ملف الوسائط المرتبط بالمشروع:\n\n{media_str or 'غير محدد'}\n\nهل تود تحديد مكانه الآن يدوياً؟"
+                if is_ar else
+                f"⚠️ Could not find the associated media file:\n\n{media_str or 'Not specified'}\n\nWould you like to locate it now?"
+            )
+            if messagebox.askyesno(self.text("app_title"), msg):
+                loc = filedialog.askopenfilename(
+                    title="تحديد ملف الوسائط للمشروع" if is_ar else "Locate Project Media File",
+                    filetypes=[("Media Files", "*.*")],
+                )
+                if loc and Path(loc).is_file():
+                    data["media_path"] = str(Path(loc).resolve())
+                else:
+                    return
+            else:
+                return
+
+        self.restore_saved_session(data)
+        self.current_project_file = target_path
+        self.title(f"{self.text('app_title')} — [{target_path.name}]")
+        open_msg = f"📂 تم فتح المشروع بنجاح: {target_path.name}" if is_ar else f"📂 Project opened successfully: {target_path.name}"
+        self.status_var.set(open_msg)
+        self._append_log(f"\n{open_msg}\n")
+        if hasattr(self, "davinci_timeline"):
+            self.davinci_timeline.show_hud_toast("📂 " + ("تم فتح المشروع بنجاح!" if is_ar else "Project Loaded!"))
+
+    def show_recent_projects_popup(self):
+        """
+        Displays a popup menu under the '🕒 الأخيرة' button listing recent projects and recent media.
+        """
+        is_ar = self.language_var.get() == "العربية"
+        rec_projects = get_recent_projects()
+        rec_media = get_recent_media()
+
+        if not rec_projects and not rec_media:
+            msg = "لا توجد مشاريع أو ملفات وسائط سابقة مسجلة." if is_ar else "No recent projects or media files found."
+            if hasattr(self, "davinci_timeline"):
+                self.davinci_timeline.show_hud_toast("🕒 " + msg)
+            else:
+                messagebox.showinfo(self.text("app_title"), msg)
+            return
+
+        menu = tk.Menu(self, tearoff=0, font=("Segoe UI", 9))
+
+        if rec_projects:
+            menu.add_command(
+                label="📁 المشاريع السابقة (.masproj):" if is_ar else "📁 Recent Projects (.masproj):",
+                state="disabled"
+            )
+            for item in rec_projects[:10]:
+                p_path = item.get("path", "")
+                p_title = item.get("title", Path(p_path).stem if p_path else "")
+                n_c = item.get("clips_count", 0)
+                lbl = f"  💾 {p_title} ({n_c} مقاطع)" if is_ar else f"  💾 {p_title} ({n_c} clips)"
+                menu.add_command(
+                    label=lbl,
+                    command=lambda p=p_path: self.open_project(p)
+                )
+
+        if rec_projects and rec_media:
+            menu.add_separator()
+
+        if rec_media:
+            menu.add_command(
+                label="🎬 ملفات الوسائط الأخيرة:" if is_ar else "🎬 Recent Media Files:",
+                state="disabled"
+            )
+            for m_item in rec_media[:10]:
+                m_path = m_item.get("path", "")
+                m_name = m_item.get("name", Path(m_path).name if m_path else "")
+                lbl = f"  🎥 {m_name}"
+                menu.add_command(
+                    label=lbl,
+                    command=lambda p=m_path: self.set_source(Path(p))
+                )
+
+        # Calculate popup placement
+        btn = getattr(self, "btn_recent_proj", None)
+        if btn and btn.winfo_ismapped():
+            x = btn.winfo_rootx()
+            y = btn.winfo_rooty() + btn.winfo_height()
+        else:
+            x = self.winfo_pointerx()
+            y = self.winfo_pointery()
+
+        try:
+            menu.post(x, y)
+        except Exception:
+            pass
+
+    def _handle_save_project_event(self, event=None, save_as: bool = False):
+        if event and isinstance(event.widget, (tk.Entry, ttk.Entry, tk.Text, tk.Spinbox, ttk.Spinbox)):
+            return
+        self.save_project(save_as=save_as)
+        return "break"
+
+    def _handle_open_project_event(self, event=None):
+        if event and isinstance(event.widget, (tk.Entry, ttk.Entry, tk.Text, tk.Spinbox, ttk.Spinbox)):
+            return
+        self.open_project()
+        return "break"
+
+    # -------------------------------------------------------------------------
     # Live Studio Color Grading, Live Silence Splitting & Modular Export Helpers
     # -------------------------------------------------------------------------
 
@@ -5077,10 +5960,23 @@ class SongCoverApp(
 
 
 
+    def _open_text_settings(self):
+        """Opens text properties inspector without automatically creating timeline elements."""
+        if hasattr(self, "nle_project") and self.nle_project.text_items:
+            sel = getattr(self, "player_canvas_selected", None)
+            if not (sel and sel[0] == "V3" and 0 <= sel[1] < len(self.nle_project.text_items)):
+                self.player_canvas_selected = ("V3", len(self.nle_project.text_items) - 1)
+        else:
+            self.player_canvas_selected = ("V3", "new")
+        if hasattr(self, "davinci_timeline"):
+            self.davinci_timeline.selected_ref = self.player_canvas_selected
+            self.davinci_timeline.redraw()
+        self._show_inspector_context("overlay")
+
     # -------------------------------------------------------------------------
     # Multi-Track NLE Timeline Callbacks & Element Creation (V2, V3, V4)
     # -------------------------------------------------------------------------
-    def _nle_add_element(self, kind: str, at_sec=None):
+    def _nle_add_element(self, kind: str, at_sec=None, custom_text=None, font_name=None, font_size=None, text_color=None, bg_color=None):
         is_ar = self.language_var.get() == "العربية"
         tot = max(5.0, self._edited_total_duration() or 60.0)
         s_sec = round(max(0.0, min(max(0.0, tot - 0.5), float(at_sec if at_sec is not None else self.nle_playhead_sec))), 2)
@@ -5091,13 +5987,13 @@ class SongCoverApp(
             idx_num = len(self.nle_project.text_items) + 1
             new_item = {
                 "id": self.nle_project.next_id("v3"),
-                "text": f"عنوان احترافي {idx_num}" if is_ar else f"Pro Title {idx_num}",
+                "text": str(custom_text) if custom_text else (f"عنوان احترافي {idx_num}" if is_ar else f"Pro Title {idx_num}"),
                 "x": 0.50,
                 "y": min(0.86, 0.14 + ((idx_num - 1) % 4) * 0.10),
-                "font_size": 38,
-                "font_name": "Segoe UI",
-                "bg_color": "black",
-                "text_color": "yellow" if idx_num % 2 == 0 else "white",
+                "font_size": int(font_size) if font_size else 38,
+                "font_name": str(font_name) if font_name else "Segoe UI",
+                "bg_color": str(bg_color) if bg_color else "black",
+                "text_color": str(text_color) if text_color else ("yellow" if idx_num % 2 == 0 else "white"),
                 "opacity": 1.0,
                 "rotation": 0.0,
                 "full_duration": (at_sec is None and tot <= 6.0),
@@ -5191,7 +6087,7 @@ class SongCoverApp(
                 "x": 0.80,
                 "y": 0.04,
                 "scale": 0.16,
-                "opacity": 0.90,
+                "opacity": 1.0,
                 "rotation": 0.0,
                 "anchor": "nw",
                 "full_duration": is_first_global,
@@ -5375,6 +6271,9 @@ class SongCoverApp(
             e_ent.configure(state=st)
             btn_set_s.configure(state=st)
             btn_set_e.configure(state=st)
+            st_anim = "disabled" if full_var.get() else "readonly"
+            cmb_anim_in.configure(state=st_anim)
+            cmb_anim_out.configure(state=st_anim)
             if hasattr(self, "davinci_timeline"):
                 self.davinci_timeline.redraw()
             self._save_settings()
@@ -5430,11 +6329,62 @@ class SongCoverApp(
         btn_set_e = ttk.Button(t_frame, text="📍", width=2, style="Player.TButton", command=_set_out_playhead)
         btn_set_e.grid(row=1, column=5)
 
+        # In / Out Animation Row
+        anim_row = ttk.Frame(t_frame)
+        anim_row.grid(row=2, column=0, columnspan=6, sticky="ew", pady=(3, 1))
+        anim_row.columnconfigure(1, weight=1)
+        anim_row.columnconfigure(3, weight=1)
+
+        anim_in_opts = [
+            ("none", "بدون" if is_ar else "None"),
+            ("fade", "تلاشي Fade" if is_ar else "Fade"),
+            ("slide_up", "انزلاق لأعلى" if is_ar else "Slide Up"),
+            ("slide_down", "انزلاق لأسفل" if is_ar else "Slide Down"),
+            ("slide_left", "انزلاق يسار" if is_ar else "Slide Left"),
+            ("slide_right", "انزلاق يمين" if is_ar else "Slide Right"),
+            ("pop", "وثب Pop" if is_ar else "Pop / Zoom"),
+        ]
+        anim_out_opts = [
+            ("none", "بدون" if is_ar else "None"),
+            ("fade", "تلاشي Fade" if is_ar else "Fade"),
+            ("slide_down", "انزلاق لأسفل" if is_ar else "Slide Down"),
+            ("slide_up", "انزلاق لأعلى" if is_ar else "Slide Up"),
+            ("shrink", "انكماش Shrink" if is_ar else "Shrink"),
+        ]
+        in_map = {d: k for k, d in anim_in_opts}
+        in_rev = {k: d for k, d in anim_in_opts}
+        out_map = {d: k for k, d in anim_out_opts}
+        out_rev = {k: d for k, d in anim_out_opts}
+
+        cur_in = str(item.get("anim_in", "none") or "none")
+        cur_out = str(item.get("anim_out", "none") or "none")
+
+        ttk.Label(anim_row, text="دخول:" if is_ar else "In:").grid(row=0, column=0, sticky="w")
+        var_anim_in = tk.StringVar(value=in_rev.get(cur_in, anim_in_opts[0][1]))
+        cmb_anim_in = ttk.Combobox(anim_row, textvariable=var_anim_in, values=[d for _, d in anim_in_opts], state="readonly", width=9)
+        cmb_anim_in.grid(row=0, column=1, sticky="ew", padx=(2, 4))
+
+        ttk.Label(anim_row, text="خروج:" if is_ar else "Out:").grid(row=0, column=2, sticky="w")
+        var_anim_out = tk.StringVar(value=out_rev.get(cur_out, anim_out_opts[0][1]))
+        cmb_anim_out = ttk.Combobox(anim_row, textvariable=var_anim_out, values=[d for _, d in anim_out_opts], state="readonly", width=9)
+        cmb_anim_out.grid(row=0, column=3, sticky="ew", padx=(2, 0))
+
+        def _on_anim_select(_e=None):
+            item["anim_in"] = in_map.get(var_anim_in.get(), "none")
+            item["anim_out"] = out_map.get(var_anim_out.get(), "none")
+            self._save_settings()
+            self._render_player_studio_canvas()
+
+        cmb_anim_in.bind("<<ComboboxSelected>>", _on_anim_select)
+        cmb_anim_out.bind("<<ComboboxSelected>>", _on_anim_select)
+
         if full_var.get():
             s_ent.configure(state="disabled")
             e_ent.configure(state="disabled")
             btn_set_s.configure(state="disabled")
             btn_set_e.configure(state="disabled")
+            cmb_anim_in.configure(state="disabled")
+            cmb_anim_out.configure(state="disabled")
 
         # Split, Duplicate & Delete Row
         act_row = ttk.Frame(parent)
@@ -5550,7 +6500,7 @@ class SongCoverApp(
             or_row.grid(row=3, column=0, columnspan=2, sticky="ew", pady=1)
             or_row.columnconfigure(1, weight=1)
             or_row.columnconfigure(3, weight=1)
-            l_op_var = tk.StringVar(value=f"{int(round(float(item.get('opacity', 0.85)) * 100))}")
+            l_op_var = tk.StringVar(value=f"{int(round(float(item.get('opacity', 1.0)) * 100))}")
             l_rot_var = tk.StringVar(value=f"{int(round(float(item.get('rotation', 0.0))))}")
 
             def _apply_l_or(*_a):
@@ -5602,14 +6552,138 @@ class SongCoverApp(
             self._build_overlay_timing_controls(self.item_prop_card, 5, "V4", item, l_idx)
             return
 
+        # ---------------- V3: New Text Creator / Settings ----------------
+        if sel and sel[0] == "V3" and sel[1] == "new":
+            self.item_prop_card.configure(text="📝 إعدادات النص (Text+)" if is_ar else "📝 Text+ Settings")
+
+            hint_lbl = ttk.Label(
+                self.item_prop_card,
+                text="اضبط خيارات النص واضغط الزر بالأسفل لإدراجه في التايم لاين عند المؤشر" if is_ar else "Configure text options and click Add below to insert onto timeline at playhead",
+                font=("Segoe UI", 8),
+                foreground="#8b949e",
+                justify="center",
+                wraplength=320,
+            )
+            hint_lbl.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(2, 6))
+
+            txt_row = ttk.Frame(self.item_prop_card)
+            txt_row.grid(row=2, column=0, columnspan=2, sticky="ew", pady=2)
+            txt_row.columnconfigure(1, weight=1)
+            ttk.Label(txt_row, text="النص:" if is_ar else "Text:").grid(row=0, column=0, sticky="w", padx=(0, 4))
+            idx_num = len(self.nle_project.text_items) + 1 if hasattr(self, "nle_project") else 1
+            default_txt = f"عنوان احترافي {idx_num}" if is_ar else f"Pro Title {idx_num}"
+            draft_txt_var = tk.StringVar(value=default_txt)
+            ent = ttk.Entry(txt_row, textvariable=draft_txt_var)
+            ent.grid(row=0, column=1, sticky="ew")
+            self._attach_entry_context_menu(ent)
+
+            fs_row = ttk.Frame(self.item_prop_card)
+            fs_row.grid(row=3, column=0, columnspan=2, sticky="ew", pady=2)
+            fs_row.columnconfigure(3, weight=1)
+            ttk.Label(fs_row, text="الخط:" if is_ar else "Font:").grid(row=0, column=0, sticky="w")
+            draft_font_var = tk.StringVar(value=AVAILABLE_FONTS[0])
+            fnt_cb = ttk.Combobox(fs_row, textvariable=draft_font_var, values=AVAILABLE_FONTS, state="readonly", width=10)
+            fnt_cb.grid(row=0, column=1, padx=(2, 4))
+
+            draft_size_var = tk.StringVar(value="38")
+            ttk.Label(fs_row, text="حجم:" if is_ar else "Sz:").grid(row=0, column=2, sticky="w")
+            draft_size_scale = ttk.Scale(fs_row, from_=14, to=110, value=38, orient="horizontal", command=lambda v: draft_size_var.set(str(int(float(v)))))
+            draft_size_scale.grid(row=0, column=3, sticky="ew", padx=2)
+
+            def _on_draft_size_spin(*_a):
+                try:
+                    iv = max(14, min(120, int(float(draft_size_var.get().strip()))))
+                    draft_size_scale.set(iv)
+                except ValueError:
+                    pass
+
+            sp_fs = tk.Spinbox(fs_row, from_=14, to=120, increment=2, textvariable=draft_size_var, width=4, font=("Consolas", 8, "bold"), command=_on_draft_size_spin)
+            sp_fs.grid(row=0, column=4)
+            sp_fs.bind("<Return>", _on_draft_size_spin)
+
+            col_row = ttk.Frame(self.item_prop_card)
+            col_row.grid(row=4, column=0, columnspan=2, sticky="ew", pady=2)
+            for ci in (1, 3):
+                col_row.columnconfigure(ci, weight=1)
+
+            fg_choices = [(k, info["label_ar"] if is_ar else info["label_en"]) for k, info in BANNER_TEXT_COLORS.items()]
+            fg_map = {d: k for k, d in fg_choices}
+            draft_fg_var = tk.StringVar(value=fg_choices[0][1])
+            ttk.Label(col_row, text="لون:" if is_ar else "FG:").grid(row=0, column=0, sticky="w")
+            fg_cb = ttk.Combobox(col_row, textvariable=draft_fg_var, values=[c[1] for c in fg_choices], state="readonly", width=8)
+            fg_cb.grid(row=0, column=1, sticky="ew", padx=(2, 4))
+
+            bg_choices = [(k, info["label_ar"] if is_ar else info["label_en"]) for k, info in BANNER_BG_COLORS.items()]
+            bg_map = {d: k for k, d in bg_choices}
+            draft_bg_var = tk.StringVar(value=bg_choices[0][1])
+            ttk.Label(col_row, text="خلفية:" if is_ar else "BG:").grid(row=0, column=2, sticky="w")
+            bg_cb = ttk.Combobox(col_row, textvariable=draft_bg_var, values=[c[1] for c in bg_choices], state="readonly", width=8)
+            bg_cb.grid(row=0, column=3, sticky="ew", padx=(2, 0))
+
+            def _do_add():
+                ctext = draft_txt_var.get().strip() or default_txt
+                cfont = draft_font_var.get()
+                try:
+                    csize = int(float(draft_size_var.get().strip()))
+                except Exception:
+                    csize = 38
+                cfg = fg_map.get(draft_fg_var.get(), "white")
+                cbg = bg_map.get(draft_bg_var.get(), "black")
+                self._nle_add_element("text", custom_text=ctext, font_name=cfont, font_size=csize, text_color=cfg, bg_color=cbg)
+
+            add_action_btn = ttk.Button(
+                self.item_prop_card,
+                text="➕ إضافة هذا النص للتايم لاين" if is_ar else "➕ Add Text to Timeline",
+                command=_do_add,
+                style="PrimaryPlayer.TButton",
+            )
+            add_action_btn.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(8, 4))
+            return
+
         # ---------------- V3: Text+ Card Properties ----------------
         if sel and sel[0] == "V3" and 0 <= sel[1] < len(self.nle_project.text_items):
             t_idx = sel[1]
             item = self.nle_project.text_items[t_idx]
             self.item_prop_card.configure(text=f"📝 خصائص النص #{t_idx + 1}" if is_ar else f"📝 Text+ #{t_idx + 1} Properties")
 
+            action_bar = ttk.Frame(self.item_prop_card)
+            action_bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 3))
+            action_bar.columnconfigure(0, weight=1)
+            action_bar.columnconfigure(1, weight=1)
+
+            def _switch_to_new_text():
+                self.player_canvas_selected = ("V3", "new")
+                self._update_inspector_properties()
+
+            ttk.Button(
+                action_bar,
+                text="➕ إضافة نص جديد" if is_ar else "➕ Add New Text",
+                command=_switch_to_new_text,
+                style="PrimaryPlayer.TButton",
+            ).grid(row=0, column=0, sticky="ew", padx=(0, 2))
+
+            if len(self.nle_project.text_items) > 1:
+                t_names = [f"{i + 1}: {it.get('text', '')[:14]}" for i, it in enumerate(self.nle_project.text_items)]
+                t_sel_var = tk.StringVar(value=t_names[t_idx])
+
+                def _on_pick_t(_e=None):
+                    try:
+                        n_idx = t_names.index(t_sel_var.get())
+                        self.player_canvas_selected = ("V3", n_idx)
+                        if hasattr(self, "davinci_timeline"):
+                            self.davinci_timeline.selected_ref = self.player_canvas_selected
+                            self.davinci_timeline.redraw()
+                        self._update_inspector_properties()
+                        self._render_player_studio_canvas()
+                    except Exception:
+                        pass
+
+                t_pick_cb = ttk.Combobox(action_bar, textvariable=t_sel_var, values=t_names, state="readonly", width=12)
+                t_pick_cb.grid(row=0, column=1, sticky="ew", padx=(2, 0))
+                t_pick_cb.bind("<<ComboboxSelected>>", _on_pick_t)
+
             txt_row = ttk.Frame(self.item_prop_card)
-            txt_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=1)
+            txt_row.grid(row=2, column=0, columnspan=2, sticky="ew", pady=1)
             txt_row.columnconfigure(1, weight=1)
             ttk.Label(txt_row, text="النص:" if is_ar else "Text:").grid(row=0, column=0, sticky="w", padx=(0, 4))
             txt_var = tk.StringVar(value=item.get("text", ""))
@@ -5626,11 +6700,11 @@ class SongCoverApp(
             ent.grid(row=0, column=1, sticky="ew")
             self._attach_entry_context_menu(ent)
 
-            self._build_overlay_xy_numeric_row(self.item_prop_card, 2, "V3", item, t_idx)
+            self._build_overlay_xy_numeric_row(self.item_prop_card, 3, "V3", item, t_idx)
 
             # Font Family & Numeric Font Size Spinbox + Slider
             fs_row = ttk.Frame(self.item_prop_card)
-            fs_row.grid(row=3, column=0, columnspan=2, sticky="ew", pady=1)
+            fs_row.grid(row=4, column=0, columnspan=2, sticky="ew", pady=1)
             fs_row.columnconfigure(3, weight=1)
             ttk.Label(fs_row, text="الخط:" if is_ar else "Font:").grid(row=0, column=0, sticky="w")
             fnt_var = tk.StringVar(value=item.get("font_name", AVAILABLE_FONTS[0]))
@@ -5668,7 +6742,7 @@ class SongCoverApp(
 
             # Colors Row + Opacity/Rotation Spinboxes
             col_row = ttk.Frame(self.item_prop_card)
-            col_row.grid(row=4, column=0, columnspan=2, sticky="ew", pady=1)
+            col_row.grid(row=5, column=0, columnspan=2, sticky="ew", pady=1)
             for ci in (1, 3, 5):
                 col_row.columnconfigure(ci, weight=1)
 
@@ -5699,7 +6773,7 @@ class SongCoverApp(
             sp_tr.grid(row=0, column=5, sticky="ew")
             sp_tr.bind("<Return>", lambda _e: (item.update({"rotation": round(max(-180.0, min(180.0, float(t_rot_var.get() or 0))), 1)}), self._overlay_pil_cache.clear(), self._render_player_studio_canvas()))
 
-            self._build_overlay_timing_controls(self.item_prop_card, 5, "V3", item, t_idx)
+            self._build_overlay_timing_controls(self.item_prop_card, 6, "V3", item, t_idx)
             return
 
         # ---------------- V2: Icons, Badges & Custom Images ----------------
@@ -5986,10 +7060,10 @@ class SongCoverApp(
         self._refresh_timeline_text()
         if not self._is_playing():
             self._show_studio_canvas()
-        if clip is None:
-            self._render_player_studio_canvas()
-        else:
-            self._request_fast_preview_frame(src_sec, force=True)
+            if clip is None:
+                self._render_player_studio_canvas()
+            else:
+                self._request_fast_preview_frame(src_sec, force=True)
 
     def seek_to_start(self):
         self._in_gap_playback = False
@@ -6012,10 +7086,10 @@ class SongCoverApp(
         self._refresh_timeline_text()
         if not self._is_playing():
             self._show_studio_canvas()
-        if clip is None:
-            self._render_player_studio_canvas()
-        else:
-            self._request_fast_preview_frame(max(0.05, src_sec), force=True)
+            if clip is None:
+                self._render_player_studio_canvas()
+            else:
+                self._request_fast_preview_frame(max(0.05, src_sec), force=True)
 
     def seek_to_end(self):
         self._in_gap_playback = False
@@ -6042,10 +7116,10 @@ class SongCoverApp(
         self._refresh_timeline_text()
         if not self._is_playing():
             self._show_studio_canvas()
-        if clip is None:
-            self._render_player_studio_canvas()
-        else:
-            self._request_fast_preview_frame(max(0.05, src_sec), force=True)
+            if clip is None:
+                self._render_player_studio_canvas()
+            else:
+                self._request_fast_preview_frame(max(0.05, src_sec), force=True)
 
     def seek_timeline_to(self, target_sec):
         if not self._single_media_file_selected():
@@ -6071,10 +7145,10 @@ class SongCoverApp(
         self._refresh_timeline_text()
         if not self._is_playing():
             self._show_studio_canvas()
-        if clip is None:
-            self._render_player_studio_canvas()
-        else:
-            self._request_fast_preview_frame(src_sec, force=True)
+            if clip is None:
+                self._render_player_studio_canvas()
+            else:
+                self._request_fast_preview_frame(src_sec, force=True)
         if getattr(self, "_theater_dialog", None) and self._theater_dialog.winfo_exists():
             self._theater_dialog.refresh_preview()
 
@@ -6108,7 +7182,13 @@ class SongCoverApp(
         self.cancel_event.clear()
         self.active_operation = operation
         self.active_operation_button = button
-        self.run_started_at = time.monotonic()
+        now = time.monotonic()
+        self.run_started_at = now
+        self._completed_file_durations = []
+        self._current_file_start_time = now
+        self._last_completed_file_index = -1
+        self._progress_samples = []
+        self._smoothed_eta_seconds = None
 
     def cancel_current_operation(self):
         if not self.worker or not self.worker.is_alive():
@@ -6297,6 +7377,50 @@ class SongCoverApp(
         self._refresh_master_export_summary()
         self._render_player_studio_canvas()
 
+    def open_shortcuts_guide_dialog(self):
+        """Opens the comprehensive shortcuts & user manual guide modal dialog."""
+        from ui_dialogs.shortcuts_guide_dialog import ShortcutsGuideDialog
+        is_ar = (self.language_var.get() == "العربية")
+        dlg = ShortcutsGuideDialog(self, is_ar=is_ar)
+        self._apply_theme_to_toplevel(dlg)
+
+    def open_video_transitions_dialog(self, target_cut_index=None):
+        """Opens the 46+ transitions library modal dialog."""
+        try:
+            from ui_dialogs.video_transition_dialog import VideoTransitionDialog
+            dlg = VideoTransitionDialog(self, target_cut_index=target_cut_index)
+            self._apply_theme_to_toplevel(dlg)
+        except Exception as e:
+            print(f"Error opening transitions dialog: {e}")
+
+    # -------------------------------------------------------------------------
+    # Window State & Fullscreen (Clean Standard Windows Behavior)
+    # -------------------------------------------------------------------------
+    def _init_app_window_mode(self):
+        try:
+            self.state("zoomed")
+        except Exception:
+            pass
+
+    def toggle_app_fullscreen(self):
+        th_dlg = getattr(self, "_theater_dialog", None)
+        if th_dlg is not None and th_dlg.winfo_exists():
+            self.toggle_video_size()
+            return
+        try:
+            is_fs = bool(self.attributes("-fullscreen"))
+            self.attributes("-fullscreen", not is_fs)
+            if is_fs:
+                self.state("zoomed")
+        except Exception:
+            pass
+
+    def _handle_app_escape(self):
+        th_dlg = getattr(self, "_theater_dialog", None)
+        if th_dlg is not None and th_dlg.winfo_exists():
+            self._exit_video_fullscreen()
+        elif bool(self.attributes("-fullscreen")):
+            self.toggle_app_fullscreen()
 
     def start_trim(self):
         if self.worker and self.worker.is_alive():
@@ -6675,11 +7799,24 @@ class SongCoverApp(
                     self._finish(self.text("failed"), failed=True)
                 elif isinstance(message, tuple) and message[0] == "progress":
                     _, current, total, source_name, file_percent = message
+                    now = time.monotonic()
+                    if not hasattr(self, "_last_completed_file_index"):
+                        self._last_completed_file_index = -1
+                        self._completed_file_durations = []
+                        self._current_file_start_time = now
+
+                    if current > self._last_completed_file_index:
+                        if self._last_completed_file_index >= 0:
+                            f_dur = max(0.2, now - getattr(self, "_current_file_start_time", now))
+                            self._completed_file_durations.append(f_dur)
+                        self._current_file_start_time = now
+                        self._last_completed_file_index = current
+
                     overall_units = min(total * 100, current * 100 + file_percent)
                     overall_percent = int((overall_units / max(total * 100, 1)) * 100)
                     remaining_percent = max(0, 100 - overall_percent)
-                    eta = self._estimate_remaining_time(overall_units, total * 100)
-                    elapsed = self._format_seconds(time.monotonic() - self.run_started_at) if self.run_started_at else "00:00"
+                    eta = self._estimate_remaining_time(overall_units, total * 100, current=current, total=total, file_percent=file_percent)
+                    elapsed = self._format_seconds(now - self.run_started_at) if self.run_started_at else "00:00"
                     self.progress.configure(maximum=max(total, 1) * 100, value=overall_units)
                     if source_name and current < total:
                         if total > 1:
@@ -6762,6 +7899,11 @@ class SongCoverApp(
                 text=self.text("cancel"),
                 command=self.cancel_current_operation,
             )
+        if hasattr(self, "btn_cancel_progress"):
+            if busy:
+                self.btn_cancel_progress.grid(row=0, column=2, padx=(8, 0), sticky="e")
+            else:
+                self.btn_cancel_progress.grid_remove()
         if not busy:
             self._sync_option_state()
         self.open_input_button.configure(state=widget_state if self.input_path else "disabled")
@@ -6832,12 +7974,61 @@ class SongCoverApp(
         source_name = source_path.name if source_path else None
         self.messages.put(("progress", current, total, source_name, int(file_percent or 0)))
 
-    def _estimate_remaining_time(self, progress_units, total_units):
+    def _estimate_remaining_time(self, progress_units, total_units, current=0, total=1, file_percent=0):
         if not self.run_started_at or progress_units <= 0 or progress_units >= total_units:
             return self.text("estimating") if progress_units < total_units else "00:00"
-        elapsed = time.monotonic() - self.run_started_at
-        remaining = (elapsed / progress_units) * (total_units - progress_units)
-        return self._format_seconds(remaining)
+
+        now = time.monotonic()
+        elapsed_total = max(0.1, now - self.run_started_at)
+
+        # Sliding window samples over the last 15 seconds
+        if not hasattr(self, "_progress_samples") or self._progress_samples is None:
+            self._progress_samples = []
+        self._progress_samples.append((now, progress_units))
+        self._progress_samples = [s for s in self._progress_samples if now - s[0] <= 15.0]
+
+        sliding_rate = 0.0
+        if len(self._progress_samples) >= 2:
+            time_delta = self._progress_samples[-1][0] - self._progress_samples[0][0]
+            units_delta = self._progress_samples[-1][1] - self._progress_samples[0][1]
+            if time_delta > 0.8 and units_delta > 0:
+                sliding_rate = units_delta / time_delta
+
+        global_rate = progress_units / elapsed_total if elapsed_total > 0 else 0.0
+        effective_rate = sliding_rate if sliding_rate > 0 else global_rate
+
+        raw_remaining = 0.0
+        if total > 1:
+            completed_durs = getattr(self, "_completed_file_durations", [])
+            remaining_files_after_cur = max(0, total - (current + 1))
+            if completed_durs:
+                avg_file_time = sum(completed_durs) / len(completed_durs)
+                cur_frac_left = max(0.0, 1.0 - (file_percent / 100.0))
+                cur_file_rem = cur_frac_left * avg_file_time
+                if effective_rate > 0 and file_percent > 10:
+                    rate_based_cur_rem = (100 - file_percent) / (effective_rate * (total_units / (total * 100)))
+                    cur_file_rem = 0.6 * rate_based_cur_rem + 0.4 * cur_file_rem
+                raw_remaining = cur_file_rem + (remaining_files_after_cur * avg_file_time)
+            else:
+                if effective_rate > 0 and overall_units >= 2:
+                    raw_remaining = (total_units - progress_units) / effective_rate
+                else:
+                    return self.text("estimating")
+        else:
+            if effective_rate > 0 and overall_units >= 2:
+                raw_remaining = (total_units - progress_units) / effective_rate
+            else:
+                return self.text("estimating")
+
+        # Smooth changes using exponential moving average to prevent fluctuating jitter
+        prev_smoothed = getattr(self, "_smoothed_eta_seconds", None)
+        if prev_smoothed is not None and abs(prev_smoothed - raw_remaining) < 300:
+            smoothed = 0.82 * prev_smoothed + 0.18 * raw_remaining
+        else:
+            smoothed = raw_remaining
+
+        self._smoothed_eta_seconds = smoothed
+        return self._format_seconds(smoothed)
 
     def _format_seconds(self, seconds):
         seconds = max(0, int(seconds))

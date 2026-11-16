@@ -48,3 +48,14 @@ Thumbs.db
 desktop.ini
 .vscode/
 .idea/
+
+# Large installers & build outputs
+setup_output/
+*.exe
+.cache/
+
+# Security Keys & Keygen (DO NOT PUBLISH)
+*.pem
+clipcraft_keygen.py
+*.log
+

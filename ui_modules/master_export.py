@@ -15,6 +15,7 @@ from tkinter import messagebox, filedialog
 from video_studio.aspect_ratios import ASPECT_RATIOS
 from video_studio.color_grading import is_color_neutral
 from video_studio.transitions import get_transition_info
+from video_studio.filter_compositor import get_available_video_encoders
 import convert
 
 
@@ -71,11 +72,35 @@ class MasterExportMixin:
         cur_sk = getattr(self, "export_size_key", "Match Source")
         self.export_size_combo_var.set(self._exp_sz_rev.get(cur_sk, sz_items[0][1]))
 
+        # GPU / Hardware Acceleration Encoders
+        if hasattr(self, "export_encoder_combo"):
+            is_hevc = (cur_fk == ".mp4_hevc")
+            enc_list = get_available_video_encoders(is_hevc=is_hevc)
+            self._exp_enc_map = {}
+            self._exp_enc_rev = {}
+            combo_vals = []
+            for item in enc_list:
+                disp = item["name_ar"] if is_ar else item["name_en"]
+                self._exp_enc_map[disp] = item["id"]
+                self._exp_enc_rev[item["id"]] = disp
+                combo_vals.append(disp)
+            self.export_encoder_combo.configure(values=combo_vals)
+            cur_enc = getattr(self, "export_encoder_key", "auto")
+            self.export_encoder_combo_var.set(self._exp_enc_rev.get(cur_enc, combo_vals[0] if combo_vals else "auto"))
+
     def _on_export_format_or_size_changed(self, _e=None):
+        old_fk = getattr(self, "export_format_key", "same")
         if hasattr(self, "_exp_fmt_map"):
             self.export_format_key = self._exp_fmt_map.get(self.export_format_combo_var.get(), "same")
         if hasattr(self, "_exp_sz_map"):
             self.export_size_key = self._exp_sz_map.get(self.export_size_combo_var.get(), "Match Source")
+        if (old_fk == ".mp4_hevc") != (self.export_format_key == ".mp4_hevc"):
+            self._refresh_modular_export_combos()
+        self._refresh_master_export_summary()
+
+    def _on_export_encoder_changed(self, _e=None):
+        if hasattr(self, "_exp_enc_map") and hasattr(self, "export_encoder_combo_var"):
+            self.export_encoder_key = self._exp_enc_map.get(self.export_encoder_combo_var.get(), "auto")
         self._refresh_master_export_summary()
 
     def _on_export_scope_changed(self):
@@ -109,7 +134,29 @@ class MasterExportMixin:
         self.trim_end_var.set(self._format_time(float(c.get("src_end", 0.0))))
 
         self._refresh_master_export_summary()
-        self.start_master_export()
+        if hasattr(self, "notebook") and hasattr(self, "tab_player"):
+            try:
+                self.notebook.select(self.tab_player)
+            except Exception:
+                pass
+        if hasattr(self, "_show_inspector_context"):
+            self._show_inspector_context("export")
+
+    def export_all_clips_separately(self):
+        if not hasattr(self, "nle_project") or not self.nle_project.clips:
+            is_ar = self.language_var.get() == "العربية"
+            messagebox.showwarning(self.text("app_title"), "لا توجد مقاطع على التايم لاين لتصديرها." if is_ar else "No clips on timeline to export.")
+            return
+        if hasattr(self, "export_scope_var"):
+            self.export_scope_var.set("separate")
+        self._refresh_master_export_summary()
+        if hasattr(self, "notebook") and hasattr(self, "tab_player"):
+            try:
+                self.notebook.select(self.tab_player)
+            except Exception:
+                pass
+        if hasattr(self, "_show_inspector_context"):
+            self._show_inspector_context("export")
 
     def _refresh_master_export_summary(self):
         if not hasattr(self, "master_export_summary_var"):
@@ -134,12 +181,17 @@ class MasterExportMixin:
         v3_on = (not has_nle) or self.nle_project.track_enabled.get("V3", True)
         v2_on = (not has_nle) or self.nle_project.track_enabled.get("V2", True)
 
-        media_count = len(self.nle_project.media_items) if (has_nle and inc_overlays and v2_on) else 0
-        text_count = len(self.nle_project.text_items) if (has_nle and inc_overlays and v3_on) else (1 if (inc_overlays and v3_on and self.video_branding_config.get("title_text")) else 0)
-        has_logo = bool(inc_overlays and v4_on and ((has_nle and self.nle_project.logo_items) or self.video_branding_config.get("logo_path")))
+        all_media = self.nle_project.all_media_items() if (has_nle and hasattr(self.nle_project, "all_media_items")) else (self.nle_project.media_items if has_nle else [])
+        all_text = self.nle_project.all_text_items() if (has_nle and hasattr(self.nle_project, "all_text_items")) else (self.nle_project.text_items if has_nle else [])
+        all_logos = self.nle_project.all_logo_items() if (has_nle and hasattr(self.nle_project, "all_logo_items")) else (self.nle_project.logo_items if has_nle else [])
+
+        media_count = len(all_media) if (has_nle and inc_overlays and v2_on) else 0
+        text_count = len(all_text) if (has_nle and inc_overlays and v3_on) else (1 if (inc_overlays and v3_on and self.video_branding_config.get("title_text")) else 0)
+        has_logo = bool(inc_overlays and v4_on and (all_logos or self.video_branding_config.get("logo_path")))
 
         export_scope = self.export_scope_var.get() if hasattr(self, "export_scope_var") else "all"
         is_clip_only = (export_scope == "selected")
+        is_batch_separate = (export_scope == "separate")
 
         selected_clip_idx = None
         if has_nle:
@@ -158,6 +210,10 @@ class MasterExportMixin:
             parts.append(f"🎞️ المقطع المحدد (#{selected_clip_idx + 1} - {dur_c:.1f}ث)" if is_ar else f"🎞️ Selected Clip (#{selected_clip_idx + 1} - {dur_c:.1f}s)")
             if hasattr(self, "btn_master_export") and self.btn_master_export:
                 self.btn_master_export.configure(text=f"🚀 تصدير المقطع المحدد فقط (#{selected_clip_idx + 1})" if is_ar else f"🚀 Export Selected Clip Only (#{selected_clip_idx + 1})")
+        elif is_batch_separate:
+            parts.append(f"📂 {clip_count} ملفات مستقلة (دفعة واحدة)" if is_ar else f"📂 {clip_count} separate files (batch)")
+            if hasattr(self, "btn_master_export") and self.btn_master_export:
+                self.btn_master_export.configure(text=f"📂 تصدير جميع المقاطع منفصلة ({clip_count})" if is_ar else f"📂 Export All Clips Separately ({clip_count})")
         else:
             has_clip_edits = has_nle and inc_timeline and (self.nle_project.has_timeline_cuts_or_clip_fx() or clip_count > 1)
             if has_clip_edits:
@@ -235,21 +291,23 @@ class MasterExportMixin:
         media_overlays = None
         sub_cfg = None
 
-        # 1. V2 Media Overlays
+        # 1. V2 Media Overlays (and extra media tracks)
         if has_nle and self.nle_project.track_enabled.get("V2", True):
+            all_media = self.nle_project.all_media_items() if hasattr(self.nle_project, "all_media_items") else self.nle_project.media_items
             valid_v2 = [
-                dict(it) for it in self.nle_project.media_items
+                dict(it) for it in all_media
                 if it.get("enabled", True) and (it.get("type") != "image" or (it.get("path") and Path(str(it["path"])).is_file()))
             ]
             if valid_v2:
                 media_overlays = valid_v2
 
-        # 2. V4 Logo Watermarks
+        # 2. V4 Logo Watermarks (and extra logo tracks)
         v4_on = (not has_nle) or self.nle_project.track_enabled.get("V4", True)
         if hasattr(self, "trim_logo_var") and self.trim_logo_var.get() and v4_on:
-            if has_nle and self.nle_project.logo_items:
+            all_logos = self.nle_project.all_logo_items() if (has_nle and hasattr(self.nle_project, "all_logo_items")) else (self.nle_project.logo_items if has_nle else [])
+            if all_logos:
                 valid_v4 = [
-                    dict(it) for it in self.nle_project.logo_items
+                    dict(it) for it in all_logos
                     if it.get("enabled", True) and it.get("path") and Path(str(it["path"])).is_file()
                 ]
                 if valid_v4:
@@ -267,7 +325,7 @@ class MasterExportMixin:
                         "opacity": float(self.video_branding_config.get("logo_opacity", 0.85)),
                     }
                 else:
-                    is_clip_scope = hasattr(self, "export_scope_var") and self.export_scope_var.get() == "selected"
+                    is_clip_scope = hasattr(self, "export_scope_var") and self.export_scope_var.get() in ("selected", "separate")
                     if not is_clip_scope and getattr(self, "_allow_interactive_prompts", True):
                         is_ar = self.language_var.get() == "العربية"
                         ask_msg = (
@@ -277,18 +335,19 @@ class MasterExportMixin:
                         )
                         if messagebox.askyesno(self.text("app_title"), ask_msg):
                             self._nle_add_element("logo", self.nle_playhead_sec)
-                            if has_nle and self.nle_project.logo_items:
+                            ref_logos = self.nle_project.all_logo_items() if hasattr(self.nle_project, "all_logo_items") else self.nle_project.logo_items
+                            if has_nle and ref_logos:
                                 valid_v4 = [
-                                    dict(it) for it in self.nle_project.logo_items
+                                    dict(it) for it in ref_logos
                                     if it.get("enabled", True) and it.get("path") and Path(str(it["path"])).is_file()
                                 ]
                                 if valid_v4:
                                     logo_items = valid_v4
 
-        # 3. V3 Text+ Overlays
+        # 3. V3 Text+ Overlays (and extra text tracks)
         v3_on = (not has_nle) or self.nle_project.track_enabled.get("V3", True)
         if hasattr(self, "trim_title_var") and self.trim_title_var.get() and v3_on:
-            raw_items = self.nle_project.text_items if has_nle else self.video_branding_config.get("text_items", [])
+            raw_items = self.nle_project.all_text_items() if (has_nle and hasattr(self.nle_project, "all_text_items")) else (self.nle_project.text_items if has_nle else self.video_branding_config.get("text_items", []))
             valid_items = [
                 dict(it) for it in raw_items
                 if it.get("enabled", True) and str(it.get("text", "")).strip()
@@ -328,7 +387,7 @@ class MasterExportMixin:
             elif self.input_path and self.input_path.with_suffix(".srt").exists():
                 srt_path = self.input_path.with_suffix(".srt")
             else:
-                is_clip_scope = hasattr(self, "export_scope_var") and self.export_scope_var.get() == "selected"
+                is_clip_scope = hasattr(self, "export_scope_var") and self.export_scope_var.get() in ("selected", "separate")
                 if not is_clip_scope and getattr(self, "_allow_interactive_prompts", True):
                     is_ar = self.language_var.get() == "العربية"
                     ask_msg = "خيار دمج الترجمة مفعل ولكن لم يتم استخراج ترجمة لهذا الفيديو بعد.\nهل تريد اختيار ملف ترجمة خارجي (.srt) لدمجه؟" if is_ar else "Subtitle burning is enabled, but no subtitles were generated yet.\nWould you like to select an external (.srt) file?"
@@ -401,14 +460,21 @@ class MasterExportMixin:
         inc_burn_subs = bool(self.trim_burn_subs_var.get()) if hasattr(self, "trim_burn_subs_var") else False
         inc_transcript = bool(self.export_opt_transcript_files_var.get()) if hasattr(self, "export_opt_transcript_files_var") else False
 
-        # Check export scope: All Timeline Sequence vs Selected Clip Only
+        # Check export scope: All Timeline Sequence vs Selected Clip Only vs All Clips Separately
         export_scope = self.export_scope_var.get() if hasattr(self, "export_scope_var") else "all"
         is_clip_only = (export_scope == "selected")
+        is_batch_separate = (export_scope == "separate")
 
         has_nle = hasattr(self, "nle_project") and bool(self.nle_project.clips)
+        if is_batch_separate:
+            if not has_nle or not self.nle_project.clips:
+                is_ar = self.language_var.get() == "العربية"
+                messagebox.showwarning(self.text("app_title"), "لا توجد مقاطع على التايم لاين لتصديرها." if is_ar else "No clips on timeline to export.")
+                return
+
         selected_clip = None
         selected_clip_idx = None
-        if has_nle:
+        if has_nle and not is_batch_separate:
             sel_ref = getattr(self, "player_canvas_selected", None)
             if isinstance(sel_ref, tuple) and sel_ref[0] == "clip":
                 c_idx = sel_ref[1]
@@ -426,19 +492,42 @@ class MasterExportMixin:
             selected_clip_idx = 0
 
         # Determine time range and clips
-        if is_clip_only and selected_clip is not None:
-            c_s0 = float(selected_clip.get("src_start", 0.0))
-            c_s1 = float(selected_clip.get("src_end", 0.0))
-            c_spd = max(0.25, float(selected_clip.get("speed", 1.0) or 1.0))
-            start_seconds = c_s0
-            dur_seconds = max(0.1, (c_s1 - c_s0) / c_spd)
+        if is_batch_separate:
+            self.nle_project.recompute_timeline()
+            nle_clips = copy.deepcopy(self.nle_project.clips)
             use_nle_clips = True
-            sel_copy = copy.deepcopy(selected_clip)
-            sel_copy["tl_start"] = 0.0
-            sel_copy["tl_dur"] = dur_seconds
-            sel_copy["tl_end"] = dur_seconds
-            nle_clips = [sel_copy]
-            scope_tag = f"clip{selected_clip_idx + 1}"
+            scope_tag = "batch_clips"
+            start_seconds = 0.0
+            dur_seconds = None
+        elif is_clip_only and selected_clip is not None:
+            if selected_clip.get("sub_clips"):
+                sub_clips_copy = copy.deepcopy(selected_clip["sub_clips"])
+                tl_cur = 0.0
+                for sc in sub_clips_copy:
+                    sc_spd = max(0.25, float(sc.get("speed", 1.0) or 1.0))
+                    sc_dur = float(sc.get("tl_dur", (float(sc["src_end"]) - float(sc["src_start"])) / sc_spd))
+                    sc["tl_start"] = tl_cur
+                    sc["tl_dur"] = sc_dur
+                    sc["tl_end"] = tl_cur + sc_dur
+                    tl_cur += sc_dur
+                start_seconds = float(sub_clips_copy[0]["src_start"])
+                dur_seconds = max(0.1, tl_cur)
+                use_nle_clips = True
+                nle_clips = sub_clips_copy
+                scope_tag = f"clip{selected_clip_idx + 1}"
+            else:
+                c_s0 = float(selected_clip.get("src_start", 0.0))
+                c_s1 = float(selected_clip.get("src_end", 0.0))
+                c_spd = max(0.25, float(selected_clip.get("speed", 1.0) or 1.0))
+                start_seconds = c_s0
+                dur_seconds = max(0.1, (c_s1 - c_s0) / c_spd)
+                use_nle_clips = True
+                sel_copy = copy.deepcopy(selected_clip)
+                sel_copy["tl_start"] = 0.0
+                sel_copy["tl_dur"] = dur_seconds
+                sel_copy["tl_end"] = dur_seconds
+                nle_clips = [sel_copy]
+                scope_tag = f"clip{selected_clip_idx + 1}"
         else:
             scope_tag = ""
             start_seconds = 0.0
@@ -461,10 +550,27 @@ class MasterExportMixin:
             nle_clips = None
             if use_nle_clips:
                 self.nle_project.recompute_timeline()
-                nle_clips = copy.deepcopy(self.nle_project.clips)
-                if a1_muted:
-                    for cl in nle_clips:
-                        cl["muted"] = True
+                flat = []
+                for cl in self.nle_project.clips:
+                    if cl.get("sub_clips"):
+                        tl_cur = float(cl.get("tl_start", 0.0))
+                        for sc in cl["sub_clips"]:
+                            sc_copy = copy.deepcopy(sc)
+                            sc_spd = max(0.25, float(sc_copy.get("speed", 1.0) or 1.0))
+                            sc_dur = float(sc_copy.get("tl_dur", (float(sc_copy["src_end"]) - float(sc_copy["src_start"])) / sc_spd))
+                            sc_copy["tl_start"] = tl_cur
+                            sc_copy["tl_dur"] = sc_dur
+                            sc_copy["tl_end"] = tl_cur + sc_dur
+                            tl_cur += sc_dur
+                            if a1_muted:
+                                sc_copy["muted"] = True
+                            flat.append(sc_copy)
+                    else:
+                        cl_copy = copy.deepcopy(cl)
+                        if a1_muted:
+                            cl_copy["muted"] = True
+                        flat.append(cl_copy)
+                nle_clips = flat
 
         try:
             configs = self._build_branding_configs(remap_subs_to_nle=use_nle_clips)
@@ -588,16 +694,18 @@ class MasterExportMixin:
                 pass
 
         fmt_key = getattr(self, "export_format_key", "same")
-        video_codec = "auto"
+        chosen_enc = getattr(self, "export_encoder_key", "auto")
         if fmt_key == "same":
             target_ext = self.input_path.suffix.lower()
             if target_ext not in {".mp4", ".mkv", ".mov", ".webm", ".avi", ".mp3", ".m4a", ".wav"}:
                 target_ext = ".mp4"
+            video_codec = chosen_enc
         elif fmt_key == ".mp4_hevc":
             target_ext = ".mp4"
-            video_codec = "libx265"
+            video_codec = "libx265" if chosen_enc in ("auto", "default", None) else chosen_enc
         else:
             target_ext = fmt_key.lower()
+            video_codec = chosen_enc
 
         size_key = getattr(self, "export_size_key", "Match Source")
         quality = size_key
@@ -659,6 +767,7 @@ class MasterExportMixin:
                 video_codec,
                 scope_tag,
                 is_ar,
+                is_batch_separate,
             ),
             daemon=True,
         )
@@ -687,6 +796,7 @@ class MasterExportMixin:
         video_codec="auto",
         scope_tag="",
         is_ar=True,
+        is_batch_separate=False,
     ):
         old_stdout = sys.stdout
         old_stderr = sys.stderr
@@ -741,6 +851,159 @@ class MasterExportMixin:
             if not active_sub_cfg:
                 active_sub_cfg = {"enabled": True, "style": "Default"}
             active_sub_cfg["srt_path"] = str(existing_srt)
+
+        # Batch Export: Export each timeline clip as an individual separate file
+        if is_batch_separate and nle_clips:
+            total_clips = len(nle_clips)
+            exported_results = []
+            self.messages.put(f"\n[Batch Export] " + (f"بدء تصدير {total_clips} مقاطع كملفات منفصلة..." if is_ar else f"Starting batch export of {total_clips} separate clips...") + "\n")
+
+            def _filter_and_shift_clip(items_list, clip_start, clip_end, clip_dur):
+                if not items_list:
+                    return None
+                shifted = []
+                for it in items_list:
+                    if not it.get("enabled", True):
+                        continue
+                    if it.get("full_duration", False):
+                        shifted.append(copy.deepcopy(it))
+                        continue
+                    s = float(it.get("start_sec", 0.0) or 0.0)
+                    e = float(it.get("end_sec", 0.0) or (s + 5.0))
+                    if e > clip_start and s < clip_end:
+                        new_it = copy.deepcopy(it)
+                        new_it["start_sec"] = max(0.0, s - clip_start)
+                        new_it["end_sec"] = min(clip_dur, e - clip_start)
+                        shifted.append(new_it)
+                return shifted if shifted else None
+
+            try:
+                for c_i, c_clip in enumerate(nle_clips):
+                    if self._operation_canceled() or (hasattr(self, "cancel_event") and self.cancel_event.is_set()):
+                        self.messages.put("\n[Batch Export] " + ("تم إلغاء التصدير." if is_ar else "Batch export canceled.") + "\n")
+                        self.messages.put("\n__CANCELED__")
+                        return
+
+                    if c_clip.get("sub_clips"):
+                        sub_clips_copy = copy.deepcopy(c_clip["sub_clips"])
+                        tl_cur = 0.0
+                        for sc in sub_clips_copy:
+                            sc_spd = max(0.25, float(sc.get("speed", 1.0) or 1.0))
+                            sc_dur = float(sc.get("tl_dur", (float(sc["src_end"]) - float(sc["src_start"])) / sc_spd))
+                            sc["tl_start"] = tl_cur
+                            sc["tl_dur"] = sc_dur
+                            sc["tl_end"] = tl_cur + sc_dur
+                            tl_cur += sc_dur
+                        c_dur = max(0.1, tl_cur)
+                        c_s0 = float(sub_clips_copy[0]["src_start"])
+                        c_s1 = float(sub_clips_copy[-1]["src_end"])
+                        pass_nle_clips = sub_clips_copy
+                        c_name = f"{stem}_clip{c_i+1:02d}_merged_{len(sub_clips_copy)}parts{target_ext}"
+                    else:
+                        c_s0 = float(c_clip.get("src_start", 0.0))
+                        c_s1 = float(c_clip.get("src_end", 0.0))
+                        c_spd = max(0.25, float(c_clip.get("speed", 1.0) or 1.0))
+                        c_dur = max(0.1, (c_s1 - c_s0) / c_spd)
+
+                        sel_copy = copy.deepcopy(c_clip)
+                        sel_copy["tl_start"] = 0.0
+                        sel_copy["tl_dur"] = c_dur
+                        sel_copy["tl_end"] = c_dur
+                        pass_nle_clips = [sel_copy]
+                        c_name = f"{stem}_clip{c_i+1:02d}_{convert.format_time_label(c_s0)}_to_{convert.format_time_label(c_s1)}{target_ext}"
+
+                    c_tl_start = float(c_clip.get("tl_start", 0.0))
+                    c_tl_end = float(c_clip.get("tl_end", c_tl_start + c_dur))
+
+                    clip_media_ov = _filter_and_shift_clip(media_overlays, c_tl_start, c_tl_end, c_dur)
+                    clip_logo_it = _filter_and_shift_clip(logo_items, c_tl_start, c_tl_end, c_dur)
+                    clip_title_cfg = None
+                    if title_cfg and "text_items" in title_cfg and isinstance(title_cfg["text_items"], list):
+                        sh_txt = _filter_and_shift_clip(title_cfg["text_items"], c_tl_start, c_tl_end, c_dur)
+                        if sh_txt:
+                            clip_title_cfg = {"enabled": True, "text_items": sh_txt}
+                    elif title_cfg:
+                        clip_title_cfg = title_cfg
+
+                    clip_sub_cfg = None
+                    if inc_burn_subs and active_sub_cfg and active_sub_cfg.get("srt_path"):
+                        try:
+                            from video_studio.arabic_support import parse_srt_segments
+                            s_orig = Path(active_sub_cfg["srt_path"])
+                            if s_orig.is_file():
+                                parsed = parse_srt_segments(s_orig.read_text(encoding="utf-8-sig", errors="replace"))
+                                if parsed:
+                                    clip_subs = []
+                                    for seg in parsed:
+                                        ss = float(seg.get("start", 0.0))
+                                        se = float(seg.get("end", 0.0))
+                                        ov_s = max(c_s0, ss)
+                                        ov_e = min(c_s1, se)
+                                        if ov_e - ov_s >= 0.12:
+                                            clip_subs.append({
+                                                "start": round((ov_s - c_s0) / c_spd, 3),
+                                                "end": round((ov_e - c_s0) / c_spd, 3),
+                                                "text": seg.get("text", ""),
+                                            })
+                                    if clip_subs:
+                                        cache_dir = getattr(convert, "CACHE_DIR", convert.APP_DIR / ".cache")
+                                        cache_dir.mkdir(parents=True, exist_ok=True)
+                                        c_srt = cache_dir / f"clip_{c_i+1}_subs_{int(time.time() * 1000)}.srt"
+                                        c_srt.write_text(convert.generate_srt_content(clip_subs), encoding="utf-8-sig")
+                                        clip_sub_cfg = copy.deepcopy(active_sub_cfg)
+                                        clip_sub_cfg["srt_path"] = str(c_srt)
+                        except Exception:
+                            pass
+
+                    c_out_path = convert.unique_output_path(out_dir / c_name)
+
+                    self.messages.put(f"\n[Clip {c_i+1}/{total_clips}] " + (f"جاري تصدير المقطع #{c_i+1} ({c_dur:.1f} ثانية)..." if is_ar else f"Exporting clip #{c_i+1} ({c_dur:.1f}s)...") + "\n")
+
+                    def _c_prog(pct, cur_s, tot_s, ci=c_i):
+                        if self._progress_request:
+                            base = (ci / float(total_clips)) * 100.0
+                            chunk = (1.0 / float(total_clips)) * pct
+                            eff_pct = min(99, int(base + chunk))
+                            self._progress_request(ci, total_clips, c_out_path, eff_pct)
+
+                    c_res = convert.export_styled_video(
+                        video_path=self.input_path,
+                        output_path=c_out_path,
+                        start_seconds=c_s0,
+                        duration_seconds=c_dur,
+                        aspect_ratio=aspect_ratio,
+                        fit_mode=fit_mode,
+                        video_transform=video_transform,
+                        color_config=color_cfg,
+                        transitions_config=None,
+                        logo_config=logo_cfg,
+                        logo_items=clip_logo_it,
+                        title_config=clip_title_cfg,
+                        media_overlays=clip_media_ov,
+                        subtitle_config=clip_sub_cfg,
+                        silence_config=silence_cfg,
+                        nle_clips=pass_nle_clips,
+                        audio_enhancement_filter=audio_fx_filter,
+                        video_quality=quality,
+                        video_codec=video_codec,
+                        ffmpeg_exe=str(convert.ffmpeg_executable()),
+                        cancel_callback=self._operation_canceled,
+                        progress_callback=_c_prog,
+                        is_ar=is_ar,
+                    )
+                    if c_res:
+                        exported_results.append(c_res)
+                        self.messages.put(f"[Clip {c_i+1}/{total_clips}] Saved: {Path(c_res).name}\n")
+
+                if exported_results:
+                    self.messages.put(f"\n[Batch Export] " + (f"تم تصدير {len(exported_results)} مقاطع بنجاح في: {out_dir}" if is_ar else f"Successfully exported {len(exported_results)} clips to: {out_dir}") + "\n")
+                    self.messages.put("\n__DONE__")
+                else:
+                    self.messages.put("\n__FAILED__")
+            except Exception as exc:
+                self.messages.put(f"\n[Batch Export] Error: {exc}\n")
+                self.messages.put("\n__FAILED__")
+            return
 
         # 2. Output file naming
         mod_tags = []

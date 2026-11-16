@@ -242,6 +242,7 @@ def render_transformed_pil_frame(
     covers_all = (ix0 <= 0 and iy0 <= 0 and ix1 >= box_w and iy1 >= box_h)
     if not covers_all:
         if fit_mode == "blur":
+            from PIL import ImageFilter
             bg_scale = max(box_w / max(1, orig_w), box_h / max(1, orig_h))
             bw = orig_w * bg_scale
             bh = orig_h * bg_scale
@@ -249,15 +250,16 @@ def render_transformed_pil_frame(
             by0 = max(0.0, (bh - box_h) / 2.0) * (orig_h / bh)
             bx1 = bx0 + box_w * (orig_w / bw)
             by1 = by0 + box_h * (orig_h / bh)
-            tiny_w = max(14, box_w // 12)
-            tiny_h = max(14, box_h // 12)
-            bg_tiny = src.transform(
-                (tiny_w, tiny_h),
+            sub_w = max(48, box_w // 4)
+            sub_h = max(48, box_h // 4)
+            bg_sub = src.transform(
+                (sub_w, sub_h),
                 Image.Transform.EXTENT,
                 (bx0, by0, bx1, by1),
                 resample=Image.Resampling.BILINEAR,
             )
-            canvas = bg_tiny.resize((box_w, box_h), Image.Resampling.BILINEAR)
+            bg_blurred = bg_sub.filter(ImageFilter.BoxBlur(6))
+            canvas = bg_blurred.resize((box_w, box_h), Image.Resampling.BICUBIC)
         else:
             canvas = Image.new("RGB", (box_w, box_h), (0, 0, 0))
     else:

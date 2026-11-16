@@ -80,6 +80,84 @@ def detect_best_video_encoder(
     logger.info("Export video encoder selected: %s (is_hevc=%s)", detected_enc, is_hevc)
     return detected_enc
 
+
+_AVAILABLE_ENCODERS_CACHE: Dict[Tuple[str, bool], List[Dict[str, Any]]] = {}
+
+
+def get_available_video_encoders(
+    ffmpeg_exe: str = "ffmpeg",
+    is_hevc: bool = False,
+) -> List[Dict[str, Any]]:
+    """
+    Probes and returns the list of available GPU and CPU video encoders supported
+    by the user's FFmpeg binary and installed graphics hardware.
+    """
+    cache_key = (str(ffmpeg_exe), bool(is_hevc))
+    if cache_key in _AVAILABLE_ENCODERS_CACHE:
+        return _AVAILABLE_ENCODERS_CACHE[cache_key]
+
+    detected_best = detect_best_video_encoder(ffmpeg_exe=ffmpeg_exe, is_hevc=is_hevc)
+
+    encoders: List[Dict[str, Any]] = [
+        {
+            "id": "auto",
+            "name_ar": f"⚡ تلقائي ذكي ({detected_best})",
+            "name_en": f"⚡ Auto Smart ({detected_best})",
+            "is_gpu": detected_best not in ("libx264", "libx265"),
+        }
+    ]
+
+    candidates = (
+        [
+            ("hevc_nvenc", "🟢 كرت NVIDIA (NVENC - HEVC)", "🟢 NVIDIA NVENC (HEVC)"),
+            ("hevc_qsv", "🔵 كرت Intel (QuickSync - HEVC)", "🔵 Intel QuickSync (HEVC)"),
+            ("hevc_amf", "🔴 كرت AMD Radeon (AMF - HEVC)", "🔴 AMD AMF (HEVC)"),
+            ("hevc_mf", "🪟 تسريع ويندوز (Media Foundation HEVC)", "🪟 Windows Media Foundation (HEVC)"),
+            ("libx265", "💻 معالج الكمبيوتر (libx265 - برمجياً)", "💻 CPU Software (libx265)"),
+        ]
+        if is_hevc
+        else [
+            ("h264_nvenc", "🟢 كرت NVIDIA (NVENC - فائق السرعة)", "🟢 NVIDIA NVENC (Ultra Fast)"),
+            ("h264_qsv", "🔵 كرت Intel (QuickSync - سريع جداً)", "🔵 Intel QuickSync (Fast)"),
+            ("h264_amf", "🔴 كرت AMD Radeon (AMF)", "🔴 AMD Radeon (AMF)"),
+            ("h264_mf", "🪟 تسريع ويندوز (Media Foundation GPU)", "🪟 Windows Media Foundation (GPU)"),
+            ("libx264", "💻 معالج الكمبيوتر (libx264 - برمجياً CPU)", "💻 CPU Software (libx264)"),
+        ]
+    )
+
+    for cid, nar, nen in candidates:
+        if cid in ("libx264", "libx265"):
+            encoders.append({"id": cid, "name_ar": nar, "name_en": nen, "is_gpu": False})
+            continue
+        try:
+            test_cmd = [
+                str(ffmpeg_exe),
+                "-y",
+                "-hide_banner",
+                "-loglevel", "error",
+                "-nostdin",
+                "-f", "lavfi",
+                "-i", "nullsrc=s=128x128:d=0.04",
+                "-c:v", cid,
+                "-frames:v", "1",
+                "-f", "null", "-",
+            ]
+            res = subprocess.run(
+                test_cmd,
+                capture_output=True,
+                text=True,
+                timeout=4,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if res.returncode == 0:
+                encoders.append({"id": cid, "name_ar": nar, "name_en": nen, "is_gpu": True})
+        except Exception:
+            continue
+
+    _AVAILABLE_ENCODERS_CACHE[cache_key] = encoders
+    return encoders
+
+
 from PIL import Image
 
 from .aspect_ratios import build_aspect_ratio_filter, get_aspect_ratio_dimensions
@@ -795,6 +873,7 @@ def export_styled_video(
             chains.append(f"[v_ar_{input_idx}]{v_pts},fps=30,setsar=1,format=yuv420p[v_seg_{seg_idx}]")
             concat_inputs.append(f"[v_seg_{seg_idx}]")
 
+            clip_tl_dur = raw_dur / spd
             if has_audio:
                 a_ops = ["asetpts=PTS-STARTPTS"]
                 atempo_s = _build_atempo_chain(spd)
@@ -804,11 +883,26 @@ def export_styled_video(
                     a_ops.append("volume=0.0")
                 elif abs(vol - 1.0) > 0.01:
                     a_ops.append(f"volume={vol:.3f}")
+
+                # Audio Fade In & Fade Out
+                fade_in = float(clip.get("audio_fade_in", 0.0) or 0.0)
+                fade_out = float(clip.get("audio_fade_out", 0.0) or 0.0)
+                if fade_in > 0.01:
+                    fi_dur = min(fade_in, clip_tl_dur)
+                    a_ops.append(f"afade=t=in:st=0:d={fi_dur:.3f}")
+                if fade_out > 0.01:
+                    fo_dur = min(fade_out, clip_tl_dur)
+                    fo_start = max(0.0, clip_tl_dur - fo_dur)
+                    a_ops.append(f"afade=t=out:st={fo_start:.3f}:d={fo_dur:.3f}")
+
+                # Intelligent Audio Denoise (Background noise filter)
+                if clip.get("audio_denoise", False):
+                    a_ops.append("afftdn=nf=-25")
+
                 a_ops.append("aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo")
                 chains.append(f"[{input_idx}:a]{','.join(a_ops)}[a_seg_{seg_idx}]")
                 concat_inputs.append(f"[a_seg_{seg_idx}]")
 
-            clip_tl_dur = raw_dur / spd
             calc_dur += clip_tl_dur
             cursor_tl += clip_tl_dur
             seg_durations.append(clip_tl_dur)

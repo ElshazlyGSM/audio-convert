@@ -54,12 +54,12 @@ class VideoTheaterDialog(tk.Toplevel):
         self._box_coords = (0, 0, 0, 0)
         self._last_rendered_ts = -999.0
 
-        # Create Cinema Video Canvas
-        self.canvas = tk.Canvas(self, bg="#000000", highlightthickness=0, cursor="arrow")
-        self.canvas.pack(fill="both", expand=True)
-
-        # Build Floating Bottom Control Bar
+        # Build Floating Bottom Control Bar FIRST
         self._build_floating_controls()
+
+        # Create Cinema Video Containers (Hardware VLC + Studio Canvas)
+        self.video_surface = tk.Frame(self, bg="#000000")
+        self.canvas = tk.Canvas(self, bg="#000000", highlightthickness=0, cursor="arrow")
 
         # Bind Key and Mouse Events
         self.bind("<Escape>", lambda _e: self.close())
@@ -70,6 +70,10 @@ class VideoTheaterDialog(tk.Toplevel):
         self.bind("<End>", lambda _e: self._seek_to(self._total_duration()))
         self.bind("f", lambda _e: self.close())
         self.bind("F", lambda _e: self.close())
+
+        self.video_surface.bind("<Double-Button-1>", lambda _e: self.close())
+        self.video_surface.bind("<Button-1>", lambda _e: self._toggle_play())
+        self.video_surface.bind("<Motion>", self._on_user_activity)
 
         self.canvas.bind("<Double-Button-1>", lambda _e: self.close())
         self.canvas.bind("<Button-1>", lambda _e: self._toggle_play())
@@ -84,9 +88,68 @@ class VideoTheaterDialog(tk.Toplevel):
         if hasattr(self.app, "expand_video_button"):
             self.app.expand_video_button.configure(text="✕ تصغير" if self.is_ar else "✕ Exit Full")
 
-        # Initial Render
-        self.after(50, self.refresh_preview)
+        # Initial View Setup (Hardware VLC or Studio Canvas)
+        if getattr(self.app, "studio_live_preview_mode", False):
+            self._show_theater_canvas()
+        else:
+            self._show_theater_vlc()
+
         self._schedule_auto_hide_check()
+
+    def _show_theater_vlc(self):
+        if hasattr(self, "canvas") and self.canvas.winfo_ismapped():
+            self.canvas.pack_forget()
+        if hasattr(self, "video_surface") and not self.video_surface.winfo_ismapped():
+            self.video_surface.pack(side="top", fill="both", expand=True)
+        if getattr(self.app, "media_player", None):
+            try:
+                self.update()
+            except Exception:
+                self.update_idletasks()
+            hwnd = self.video_surface.winfo_id()
+            import sys
+            try:
+                was_playing = self.app._is_playing()
+                cur_ms = self.app.media_player.get_time()
+                self.app.media_player.stop()
+                if sys.platform.startswith("win"):
+                    self.app.media_player.set_hwnd(hwnd)
+                elif sys.platform == "darwin":
+                    self.app.media_player.set_nsobject(hwnd)
+                else:
+                    self.app.media_player.set_xwindow(hwnd)
+                self.app.apply_video_aspect_ratio()
+                self.app.apply_video_color_adjustments()
+                self.app.media_player.play()
+                import time
+                time.sleep(0.04)
+                if cur_ms >= 0:
+                    self.app.media_player.set_time(cur_ms)
+                if not was_playing:
+                    self.app.media_player.pause()
+                else:
+                    if hasattr(self.app, "_schedule_playback_tick"):
+                        self.app._schedule_playback_tick()
+            except Exception:
+                pass
+
+        tl_sec = self._current_timeline_seconds()
+        tot_dur = max(0.1, self._total_duration())
+        self._draw_scrubber(tl_sec, tot_dur)
+        self._update_timecode_text(tl_sec, tot_dur)
+        self.btn_play.configure(text="||" if self.app._is_playing() else "▶")
+        self.lbl_badges.configure(text=self._get_active_effects_badge_text())
+        if hasattr(self, "btn_toggle_mode"):
+            self.btn_toggle_mode.configure(text="🎨 المؤثرات والألوان" if self.is_ar else "🎨 Studio Effects")
+
+    def _show_theater_canvas(self):
+        if hasattr(self, "video_surface") and self.video_surface.winfo_ismapped():
+            self.video_surface.pack_forget()
+        if hasattr(self, "canvas") and not self.canvas.winfo_ismapped():
+            self.canvas.pack(side="top", fill="both", expand=True)
+        self.refresh_preview()
+        if hasattr(self, "btn_toggle_mode"):
+            self.btn_toggle_mode.configure(text="📺 المعاينة المباشرة" if self.is_ar else "📺 Direct Preview")
 
     # -------------------------------------------------------------------------
     # Floating Controls UI
@@ -101,7 +164,7 @@ class VideoTheaterDialog(tk.Toplevel):
             padx=14,
             pady=8,
         )
-        self.bar.place(relx=0.5, rely=0.93, anchor="center", relwidth=0.92, height=76)
+        self.bar.pack(side="bottom", fill="x")
 
         # 1. Interactive Timeline Scrubber (Top Row)
         self.scrub_canvas = tk.Canvas(
@@ -125,7 +188,7 @@ class VideoTheaterDialog(tk.Toplevel):
         # Transport Buttons (Play, Skip, Rewind, Start, End)
         self.btn_play = tk.Button(
             btn_row,
-            text="⏸" if self.app._is_playing() else "▶",
+            text="||" if self.app._is_playing() else "▶",
             command=self._toggle_play,
             bg="#238636",
             fg="#ffffff",
@@ -188,7 +251,7 @@ class VideoTheaterDialog(tk.Toplevel):
         )
         self.lbl_badges.pack(side="left", expand=True)
 
-        # Right-side Buttons: Mute/Volume & Exit Fullscreen
+        # Right-side Buttons: Mute/Volume, Mode Toggle & Exit Fullscreen
         self.btn_exit = tk.Button(
             btn_row,
             text="✕ خروج (Esc)" if self.is_ar else "✕ Exit (Esc)",
@@ -203,6 +266,22 @@ class VideoTheaterDialog(tk.Toplevel):
             cursor="hand2",
         )
         self.btn_exit.pack(side="right", padx=(6, 0))
+
+        mode_text = "🎨 المؤثرات والألوان" if not getattr(self.app, "studio_live_preview_mode", False) else "📺 المعاينة المباشرة"
+        self.btn_toggle_mode = tk.Button(
+            btn_row,
+            text=mode_text,
+            command=self._toggle_theater_mode,
+            bg="#1f6feb",
+            fg="#ffffff",
+            activebackground="#388bfd",
+            activeforeground="#ffffff",
+            font=("Segoe UI", 9, "bold"),
+            relief="flat",
+            padx=8,
+            cursor="hand2",
+        )
+        self.btn_toggle_mode.pack(side="right", padx=(0, 6))
 
         vol_text = "🔊" if float(getattr(self.app, "volume_var", tk.StringVar(value="80")).get() or 80) > 0 else "🔇"
         self.btn_mute = tk.Button(
@@ -267,9 +346,9 @@ class VideoTheaterDialog(tk.Toplevel):
     # -------------------------------------------------------------------------
     def _on_user_activity(self, _event=None):
         self._last_mouse_move = time.monotonic()
-        if not self.bar.winfo_ismapped():
-            self.bar.place(relx=0.5, rely=0.93, anchor="center", relwidth=0.92, height=76)
-            self.canvas.configure(cursor="arrow")
+        if hasattr(self, "bar") and not self.bar.winfo_ismapped():
+            self.bar.pack(side="bottom", fill="x")
+            self.configure(cursor="arrow")
 
     def _schedule_auto_hide_check(self):
         if not self.winfo_exists():
@@ -279,10 +358,11 @@ class VideoTheaterDialog(tk.Toplevel):
             self.app._is_playing()
             and not self._is_scrubbing
             and now - self._last_mouse_move >= 2.5
+            and hasattr(self, "bar")
             and self.bar.winfo_ismapped()
         ):
-            self.bar.place_forget()
-            self.canvas.configure(cursor="none")
+            self.bar.pack_forget()
+            self.configure(cursor="none")
         self.after(300, self._schedule_auto_hide_check)
 
     # -------------------------------------------------------------------------
@@ -303,6 +383,16 @@ class VideoTheaterDialog(tk.Toplevel):
             return float(self.app.media_duration)
         return 1.0
 
+    def update_playback_transport(self, tl_sec: float, tot_dur: float):
+        if not self.winfo_exists():
+            return
+        self._draw_scrubber(tl_sec, tot_dur)
+        self._update_timecode_text(tl_sec, tot_dur)
+        self.btn_play.configure(text="||" if self.app._is_playing() else "▶")
+        self.lbl_badges.configure(text=self._get_active_effects_badge_text())
+        if getattr(self.app, "studio_live_preview_mode", False):
+            self.refresh_preview()
+
     def refresh_preview(self):
         """Paints the current composite video frame onto the theater canvas."""
         if not self.winfo_exists():
@@ -316,8 +406,12 @@ class VideoTheaterDialog(tk.Toplevel):
         # Update Scrubber & Timecode
         self._draw_scrubber(tl_sec, tot_dur)
         self._update_timecode_text(tl_sec, tot_dur)
-        self.btn_play.configure(text="⏸" if self.app._is_playing() else "▶")
+        self.btn_play.configure(text="||" if self.app._is_playing() else "▶")
         self.lbl_badges.configure(text=self._get_active_effects_badge_text())
+
+        # If VLC is active in hardware mode, VLC renders directly to self.video_surface
+        if not getattr(self.app, "studio_live_preview_mode", False):
+            return
 
         # Fetch decoded source frame
         vpath = getattr(self.app, "input_path", None)
@@ -591,7 +685,7 @@ class VideoTheaterDialog(tk.Toplevel):
         self._on_user_activity()
         if hasattr(self.app, "toggle_play_pause"):
             self.app.toggle_play_pause()
-        self.btn_play.configure(text="⏸" if self.app._is_playing() else "▶")
+        self.btn_play.configure(text="||" if self.app._is_playing() else "▶")
         self.refresh_preview()
 
     def _seek_relative(self, delta_s: float):
@@ -646,6 +740,15 @@ class VideoTheaterDialog(tk.Toplevel):
 
         self.lbl_timecode.configure(text=f"{_fmt(cur_s)} / {_fmt(tot_s)}")
 
+    def _toggle_theater_mode(self):
+        self._on_user_activity()
+        is_studio = not getattr(self.app, "studio_live_preview_mode", False)
+        self.app.studio_live_preview_mode = is_studio
+        if is_studio:
+            self._show_theater_canvas()
+        else:
+            self._show_theater_vlc()
+
     # -------------------------------------------------------------------------
     # Close & Return to Editor
     # -------------------------------------------------------------------------
@@ -656,12 +759,52 @@ class VideoTheaterDialog(tk.Toplevel):
         is_ar = self.is_ar
         if hasattr(self.app, "expand_video_button"):
             self.app.expand_video_button.configure(text="⛶ تكبير" if is_ar else "⛶ Fullscreen")
-        try:
-            self.destroy()
-        except Exception:
-            pass
-        # Refresh main editor view
-        if hasattr(self.app, "_show_studio_canvas"):
-            self.app._show_studio_canvas()
+
+        # Cleanly re-attach VLC to main window video surface
+        if getattr(self.app, "media_player", None) and hasattr(self.app, "video_surface"):
+            import sys
+            try:
+                was_playing = self.app._is_playing()
+                cur_ms = self.app.media_player.get_time()
+                self.app.media_player.stop()
+                try:
+                    self.destroy()
+                except Exception:
+                    pass
+                self.app.update()
+                main_hwnd = self.app.video_surface.winfo_id()
+                if sys.platform.startswith("win"):
+                    self.app.media_player.set_hwnd(main_hwnd)
+                elif sys.platform == "darwin":
+                    self.app.media_player.set_nsobject(main_hwnd)
+                else:
+                    self.app.media_player.set_xwindow(main_hwnd)
+                self.app.apply_video_aspect_ratio()
+                self.app.apply_video_color_adjustments()
+                self.app.media_player.play()
+                import time
+                time.sleep(0.04)
+                if cur_ms >= 0:
+                    self.app.media_player.set_time(cur_ms)
+                if not was_playing:
+                    self.app.media_player.pause()
+                else:
+                    if hasattr(self.app, "_schedule_playback_tick"):
+                        self.app._schedule_playback_tick()
+            except Exception:
+                pass
+        else:
+            try:
+                self.destroy()
+            except Exception:
+                pass
+
+        # Refresh main editor view preserving current mode
+        if getattr(self.app, "studio_live_preview_mode", False):
+            if hasattr(self.app, "_show_studio_canvas"):
+                self.app._show_studio_canvas()
+        else:
+            if hasattr(self.app, "_show_vlc_surface"):
+                self.app._show_vlc_surface()
         if hasattr(self.app, "_sync_live_video_overlay"):
             self.app._sync_live_video_overlay()

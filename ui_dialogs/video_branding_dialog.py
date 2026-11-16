@@ -45,7 +45,7 @@ class VideoBrandingDialog(tk.Toplevel):
         self.logo_x = float(cfg.get("logo_x", 0.82))
         self.logo_y = float(cfg.get("logo_y", 0.04))
         self.logo_scale_var = tk.DoubleVar(value=float(cfg.get("logo_scale", 0.16)))
-        self.logo_opacity_var = tk.DoubleVar(value=float(cfg.get("logo_opacity", 0.85)))
+        self.logo_opacity_var = tk.DoubleVar(value=float(cfg.get("logo_opacity", 1.0)))
 
         # 3. Multiple Text Overlays state
         self.text_items = []
@@ -976,7 +976,7 @@ class VideoBrandingDialog(tk.Toplevel):
         self.logo_x = 0.82
         self.logo_y = 0.04
         self.logo_scale_var.set(0.16)
-        self.logo_opacity_var.set(0.85)
+        self.logo_opacity_var.set(1.0)
         self.burn_subs_var.set(True)
         self.text_items = [{
             "id": "t_1",

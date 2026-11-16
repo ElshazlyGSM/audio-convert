@@ -17,12 +17,12 @@ VSVersionInfo(
           '040904B0',
           [
             StringStruct('CompanyName', 'ahmed elshazly'),
-            StringStruct('FileDescription', 'Media Audio Studio'),
+            StringStruct('FileDescription', 'ClipCraft Studio'),
             StringStruct('FileVersion', '1.0.0.0'),
-            StringStruct('InternalName', 'MediaAudioStudio'),
+            StringStruct('InternalName', 'ClipCraftStudio'),
             StringStruct('LegalCopyright', 'Copyright (C) 2026 ahmed elshazly <Elshazly.gsm@gmail.com>'),
-            StringStruct('OriginalFilename', 'MediaAudioStudio.exe'),
-            StringStruct('ProductName', 'Media Audio Studio'),
+            StringStruct('OriginalFilename', 'ClipCraftStudio.exe'),
+            StringStruct('ProductName', 'ClipCraft Studio'),
             StringStruct('ProductVersion', '1.0.0.0'),
             StringStruct('Comments', 'Developed by ahmed elshazly (Elshazly.gsm@gmail.com)'),
           ]

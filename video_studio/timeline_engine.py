@@ -42,12 +42,20 @@ class NLEProjectState:
         self.media_items: List[Dict[str, Any]] = []   # Track V2 (icons & images)
         self.text_items: List[Dict[str, Any]] = []    # Track V3 (texts)
         self.logo_items: List[Dict[str, Any]] = []    # Track V4 (logos)
+        self.extra_tracks: Dict[str, List[Dict[str, Any]]] = {}
         self.track_enabled: Dict[str, bool] = {
             "V4": True,
             "V3": True,
             "V2": True,
             "V1": True,
             "A1": True,
+        }
+        self.track_locked: Dict[str, bool] = {
+            "V4": False,
+            "V3": False,
+            "V2": False,
+            "V1": False,
+            "A1": False,
         }
         self.ripple_mode: bool = True
         self._id_counter: int = 1
@@ -59,13 +67,30 @@ class NLEProjectState:
         self._id_counter += 1
         return val
 
+    def is_track_locked(self, track_key: str) -> bool:
+        if not hasattr(self, "track_locked") or not isinstance(self.track_locked, dict):
+            self.track_locked = {}
+        return bool(self.track_locked.get(track_key, False))
+
+    def set_track_locked(self, track_key: str, locked: bool):
+        if not hasattr(self, "track_locked") or not isinstance(self.track_locked, dict):
+            self.track_locked = {}
+        self.track_locked[track_key] = bool(locked)
+
+    def toggle_track_lock(self, track_key: str) -> bool:
+        new_val = not self.is_track_locked(track_key)
+        self.set_track_locked(track_key, new_val)
+        return new_val
+
     def snapshot_dict(self) -> Dict[str, Any]:
         return copy.deepcopy({
             "clips": self.clips,
             "media_items": self.media_items,
             "text_items": self.text_items,
             "logo_items": self.logo_items,
+            "extra_tracks": getattr(self, "extra_tracks", {}),
             "track_enabled": self.track_enabled,
+            "track_locked": getattr(self, "track_locked", {}),
             "ripple_mode": self.ripple_mode,
             "id_counter": self._id_counter,
         })
@@ -76,7 +101,9 @@ class NLEProjectState:
         self.media_items = data.get("media_items", [])
         self.text_items = data.get("text_items", [])
         self.logo_items = data.get("logo_items", [])
+        self.extra_tracks = data.get("extra_tracks", {})
         self.track_enabled = data.get("track_enabled", {"V4": True, "V3": True, "V2": True, "V1": True, "A1": True})
+        self.track_locked = data.get("track_locked", {"V4": False, "V3": False, "V2": False, "V1": False, "A1": False})
         self.ripple_mode = bool(data.get("ripple_mode", True))
         self._id_counter = max(self._id_counter, int(data.get("id_counter", 1)))
         self.recompute_timeline()
@@ -122,6 +149,7 @@ class NLEProjectState:
             self.media_items = []
             self.text_items = []
             self.logo_items = []
+            self.extra_tracks = {}
             self._undo_stack.clear()
             self._redo_stack.clear()
             self.recompute_timeline()
@@ -141,6 +169,9 @@ class NLEProjectState:
                 "speed": 1.0,
                 "volume": 1.0,
                 "muted": False,
+                "audio_fade_in": 0.0,
+                "audio_fade_out": 0.0,
+                "audio_denoise": False,
                 "custom_transform": False,
                 "zoom": 1.0,
                 "pan_x": 0.0,
@@ -188,10 +219,16 @@ class NLEProjectState:
         # Assign sequential fallback tl_start for any clip dict missing tl_start
         fallback_t = 0.0
         for c in self.clips:
-            s0 = max(0.0, float(c.get("src_start", 0.0)))
-            s1 = max(s0 + 0.08, float(c.get("src_end", max(1.0, self.source_duration))))
-            spd = max(0.25, min(4.0, float(c.get("speed", 1.0) or 1.0)))
-            tl_dur = (s1 - s0) / spd
+            if c.get("sub_clips"):
+                tl_dur = sum(
+                    float(sc.get("tl_dur", (float(sc["src_end"]) - float(sc["src_start"])) / max(0.25, float(sc.get("speed", 1.0)))))
+                    for sc in c["sub_clips"]
+                )
+            else:
+                s0 = max(0.0, float(c.get("src_start", 0.0)))
+                s1 = max(s0 + 0.08, float(c.get("src_end", max(1.0, self.source_duration))))
+                spd = max(0.25, min(4.0, float(c.get("speed", 1.0) or 1.0)))
+                tl_dur = (s1 - s0) / spd
             if "tl_start" not in c or c.get("tl_start") is None:
                 c["tl_start"] = round(fallback_t, 3)
             fallback_t = max(fallback_t, float(c["tl_start"])) + tl_dur
@@ -200,13 +237,21 @@ class NLEProjectState:
         self.clips.sort(key=lambda x: float(x.get("tl_start", 0.0)))
         prev_end = 0.0
         for idx, c in enumerate(self.clips):
-            s0 = max(0.0, float(c.get("src_start", 0.0)))
-            s1 = max(s0 + 0.08, float(c.get("src_end", max(1.0, self.source_duration))))
-            spd = max(0.25, min(4.0, float(c.get("speed", 1.0) or 1.0)))
-            c["src_start"] = round(s0, 3)
-            c["src_end"] = round(s1, 3)
-            c["speed"] = round(spd, 2)
-            tl_dur = (s1 - s0) / spd
+            if c.get("sub_clips"):
+                tl_dur = sum(
+                    float(sc.get("tl_dur", (float(sc["src_end"]) - float(sc["src_start"])) / max(0.25, float(sc.get("speed", 1.0)))))
+                    for sc in c["sub_clips"]
+                )
+                c["src_start"] = round(float(c["sub_clips"][0]["src_start"]), 3)
+                c["src_end"] = round(float(c["sub_clips"][-1]["src_end"]), 3)
+            else:
+                s0 = max(0.0, float(c.get("src_start", 0.0)))
+                s1 = max(s0 + 0.08, float(c.get("src_end", max(1.0, self.source_duration))))
+                spd = max(0.25, min(4.0, float(c.get("speed", 1.0) or 1.0)))
+                c["src_start"] = round(s0, 3)
+                c["src_end"] = round(s1, 3)
+                c["speed"] = round(spd, 2)
+                tl_dur = (s1 - s0) / spd
             tl_s = max(prev_end, max(0.0, float(c.get("tl_start", prev_end))))
             c["tl_start"] = round(tl_s, 3)
             c["tl_dur"] = round(tl_dur, 3)
@@ -218,7 +263,10 @@ class NLEProjectState:
     @property
     def total_duration(self) -> float:
         max_end = float(self.clips[-1].get("tl_end", 0.0)) if self.clips else float(self.source_duration or 0.0)
-        for t_list in (self.media_items, self.text_items, self.logo_items):
+        tracks_to_check = [self.media_items, self.text_items, self.logo_items]
+        if hasattr(self, "extra_tracks") and self.extra_tracks:
+            tracks_to_check.extend(self.extra_tracks.values())
+        for t_list in tracks_to_check:
             for it in t_list:
                 if it.get("enabled", True) and not it.get("full_duration", False):
                     max_end = max(max_end, float(it.get("end_sec", 0.0)))
@@ -301,10 +349,24 @@ class NLEProjectState:
             if t < c["tl_start"] - 0.02:
                 return idx, None, float(c["src_start"])
             if t <= c["tl_end"] + 0.02:
-                local_t = max(0.0, min(c["tl_dur"], t - c["tl_start"]))
-                src_t = c["src_start"] + local_t * float(c.get("speed", 1.0))
-                src_t = max(c["src_start"], min(c["src_end"], src_t))
-                return idx, c, src_t
+                local_t = max(0.0, min(float(c.get("tl_dur", 1.0)), t - float(c["tl_start"])))
+                sub_clips = c.get("sub_clips")
+                if sub_clips:
+                    cur_sub_offset = 0.0
+                    for sc in sub_clips:
+                        sc_dur = float(sc.get("tl_dur", (float(sc["src_end"]) - float(sc["src_start"])) / max(0.25, float(sc.get("speed", 1.0)))))
+                        if local_t <= cur_sub_offset + sc_dur + 0.02:
+                            sub_local = max(0.0, local_t - cur_sub_offset)
+                            sub_spd = max(0.25, float(sc.get("speed", 1.0)))
+                            sub_src_t = float(sc["src_start"]) + sub_local * sub_spd
+                            return idx, sc, max(float(sc["src_start"]), min(float(sc["src_end"]), sub_src_t))
+                        cur_sub_offset += sc_dur
+                    last_sc = sub_clips[-1]
+                    return idx, last_sc, float(last_sc["src_end"])
+                else:
+                    src_t = c["src_start"] + local_t * float(c.get("speed", 1.0))
+                    src_t = max(c["src_start"], min(c["src_end"], src_t))
+                    return idx, c, src_t
         last = self.clips[-1]
         if t > last["tl_end"] + 0.02:
             return len(self.clips) - 1, None, float(last["src_end"])
@@ -486,6 +548,118 @@ class NLEProjectState:
         self.recompute_timeline(pack_gaps=True)
         return to_idx
 
+    def join_clips(self, clip_indices: List[int]) -> Optional[int]:
+        """
+        Merges / Joins two or more adjacent V1 clips into a single clip.
+        If clips were adjacent cuts from the same file without gap, rejoins them natively.
+        If non-contiguous (e.g. cuts removed in between), creates a Compound Clip with sub_clips.
+        Pushes undo state and recomputes the timeline.
+        Returns the index of the resulting merged clip.
+        """
+        if not self.clips or len(clip_indices) < 2:
+            return None
+        uniq = sorted(list(set(clip_indices)))
+        if not all(0 <= i < len(self.clips) for i in uniq):
+            return None
+        # Enforce that clips to be merged must be a contiguous range of timeline indices
+        if uniq != list(range(uniq[0], uniq[-1] + 1)):
+            return None
+
+        self.push_undo()
+        first_idx = uniq[0]
+        last_idx = uniq[-1]
+        clips_to_merge = [self.clips[i] for i in uniq]
+
+        # Check if they are pure contiguous cuts from the same video file without gaps or speed differences
+        all_same_speed = len(set(float(c.get("speed", 1.0)) for c in clips_to_merge)) == 1
+        no_existing_subclips = not any(c.get("sub_clips") for c in clips_to_merge)
+        is_pure_seamless = all_same_speed and no_existing_subclips
+        if is_pure_seamless:
+            for i in range(len(clips_to_merge) - 1):
+                ca = clips_to_merge[i]
+                cb = clips_to_merge[i + 1]
+                if round(float(ca.get("src_end", 0.0)), 2) != round(float(cb.get("src_start", 0.0)), 2):
+                    is_pure_seamless = False
+                    break
+                if round(float(ca.get("tl_end", 0.0)), 2) != round(float(cb.get("tl_start", 0.0)), 2):
+                    is_pure_seamless = False
+                    break
+
+        if is_pure_seamless:
+            # Native direct join
+            merged = copy.deepcopy(clips_to_merge[0])
+            merged["src_end"] = clips_to_merge[-1]["src_end"]
+            tot_dur = sum(float(c.get("tl_dur", 0.0)) for c in clips_to_merge)
+            merged["tl_dur"] = round(tot_dur, 3)
+            merged["tl_end"] = round(float(merged["tl_start"]) + tot_dur, 3)
+            base_name = clips_to_merge[0].get("name", "Clip").split(" #")[0]
+            merged["name"] = f"{base_name} #{first_idx + 1}"
+            self.clips[first_idx : last_idx + 1] = [merged]
+        else:
+            # Compound Clip Join
+            sub_clips = []
+            for c in clips_to_merge:
+                if c.get("sub_clips"):
+                    sub_clips.extend(copy.deepcopy(c["sub_clips"]))
+                else:
+                    sub_clips.append(copy.deepcopy(c))
+
+            merged = copy.deepcopy(clips_to_merge[0])
+            merged["id"] = self.next_id("compound")
+            merged["sub_clips"] = sub_clips
+            merged["is_compound"] = True
+            tot_dur = sum(
+                float(sc.get("tl_dur", (float(sc["src_end"]) - float(sc["src_start"])) / max(0.25, float(sc.get("speed", 1.0)))))
+                for sc in sub_clips
+            )
+            merged["tl_dur"] = round(tot_dur, 3)
+            merged["tl_end"] = round(float(merged["tl_start"]) + tot_dur, 3)
+            merged["src_start"] = sub_clips[0]["src_start"]
+            merged["src_end"] = sub_clips[-1]["src_end"]
+            merged["name"] = f"🔗 مقطع مدمج ({len(sub_clips)} أجزاء)"
+            self.clips[first_idx : last_idx + 1] = [merged]
+
+        for i, cl in enumerate(self.clips):
+            if not cl.get("sub_clips") and not str(cl.get("name", "")).startswith("🔗"):
+                b = cl.get("name", "Clip").split(" #")[0]
+                if len(self.clips) > 1 and not b.startswith("🔇"):
+                    cl["name"] = f"{b} #{i + 1}"
+
+        self.recompute_timeline(pack_gaps=False)
+        return first_idx
+
+    def unmerge_clip(self, clip_idx: int) -> bool:
+        """
+        Unpacks a Compound Clip back into its separate individual clips on the timeline.
+        """
+        if not self.clips or not (0 <= clip_idx < len(self.clips)):
+            return False
+        c = self.clips[clip_idx]
+        sub_clips = c.get("sub_clips")
+        if not sub_clips:
+            return False
+
+        self.push_undo()
+        tl_cursor = float(c.get("tl_start", 0.0))
+        unpacked = []
+        for i, sc in enumerate(sub_clips):
+            nc = copy.deepcopy(sc)
+            nc["id"] = self.next_id("clip")
+            dur = float(nc.get("tl_dur", (float(nc["src_end"]) - float(nc["src_start"])) / max(0.25, float(nc.get("speed", 1.0)))))
+            nc["tl_start"] = round(tl_cursor, 3)
+            nc["tl_dur"] = round(dur, 3)
+            nc["tl_end"] = round(tl_cursor + dur, 3)
+            if "sub_clips" in nc:
+                del nc["sub_clips"]
+            if "is_compound" in nc:
+                del nc["is_compound"]
+            unpacked.append(nc)
+            tl_cursor += dur
+
+        self.clips[clip_idx : clip_idx + 1] = unpacked
+        self.recompute_timeline(pack_gaps=False)
+        return True
+
     def apply_silence_cuts_to_timeline(
         self,
         keep_intervals: List[Tuple[float, float]],
@@ -599,7 +773,60 @@ class NLEProjectState:
             return self.text_items
         if track_key == "V4":
             return self.logo_items
+        if hasattr(self, "extra_tracks") and track_key in self.extra_tracks:
+            return self.extra_tracks[track_key]
         return []
+
+    def add_track(self, track_key: str, track_type: str = "text") -> List[Dict[str, Any]]:
+        if not hasattr(self, "extra_tracks"):
+            self.extra_tracks = {}
+        if track_key not in self.extra_tracks:
+            self.extra_tracks[track_key] = []
+        return self.extra_tracks[track_key]
+
+    def delete_track(self, track_key: str) -> bool:
+        self.push_undo()
+        if hasattr(self, "extra_tracks") and track_key in self.extra_tracks:
+            del self.extra_tracks[track_key]
+            self.recompute_timeline()
+            return True
+        if track_key == "V2":
+            self.media_items.clear()
+            self.recompute_timeline()
+            return True
+        if track_key == "V3":
+            self.text_items.clear()
+            self.recompute_timeline()
+            return True
+        if track_key == "V4":
+            self.logo_items.clear()
+            self.recompute_timeline()
+            return True
+        return False
+
+    def all_text_items(self) -> List[Dict[str, Any]]:
+        items = list(self.text_items)
+        if hasattr(self, "extra_tracks"):
+            for k, t_list in self.extra_tracks.items():
+                if k.startswith("TXT") or k.startswith("V3"):
+                    items.extend(t_list)
+        return items
+
+    def all_media_items(self) -> List[Dict[str, Any]]:
+        items = list(self.media_items)
+        if hasattr(self, "extra_tracks"):
+            for k, t_list in self.extra_tracks.items():
+                if k.startswith("MED") or k.startswith("V2"):
+                    items.extend(t_list)
+        return items
+
+    def all_logo_items(self) -> List[Dict[str, Any]]:
+        items = list(self.logo_items)
+        if hasattr(self, "extra_tracks"):
+            for k, t_list in self.extra_tracks.items():
+                if k.startswith("LOG") or k.startswith("V4"):
+                    items.extend(t_list)
+        return items
 
     def split_overlay_at(self, track_key: str, item_idx: int, tl_sec: float) -> Optional[int]:
         t_list = self.get_track_list(track_key)
@@ -847,46 +1074,20 @@ class FastVideoPreviewProvider:
 
 def extract_audio_waveform_peaks(
     media_path: Path,
-    num_buckets: int = 6000,
+    num_buckets: Optional[int] = None,
     ffmpeg_exe: Optional[str] = None,
+    duration: Optional[float] = None,
 ) -> Optional[List[float]]:
     """
-    Extracts real normalized [0.03 .. 1.0] high-density audio waveform peak bars across the full media file
-    for rendering DaVinci Resolve's green A1 audio waveform track even at deep syllable zoom!
+    Extracts real high-resolution audio waveform peak bars across the media file
+    with noise-floor gating and speech dynamic enhancement so word and sentence boundaries
+    are sharply distinguishable, just like DaVinci Resolve & Premiere Pro waveforms.
     """
     media_path = Path(media_path).resolve()
     if not media_path.is_file():
         return None
 
-    # Fast in-process PyAV decode (resampled to 800 Hz mono int16 for crisp syllable zoom)
-    if av is not None:
-        try:
-            chunks = []
-            with av.open(str(media_path)) as container:
-                if not container.streams.audio:
-                    return None
-                a_stream = container.streams.audio[0]
-                resampler = av.AudioResampler(format="s16", layout="mono", rate=800)
-                for frame in container.decode(a_stream):
-                    for rf in resampler.resample(frame):
-                        arr = rf.to_ndarray()
-                        chunks.append(arr.reshape(-1))
-            if chunks:
-                samples = np.abs(np.concatenate(chunks).astype(np.float32))
-                if samples.size > 0:
-                    b = min(num_buckets, max(32, samples.size))
-                    pad_len = (b - (samples.size % b)) % b
-                    if pad_len:
-                        samples = np.pad(samples, (0, pad_len), mode="edge")
-                    peaks = samples.reshape(b, -1).max(axis=1)
-                    p99 = float(np.percentile(peaks, 99)) if peaks.size else 1.0
-                    denom = max(120.0, p99)
-                    norm = np.clip(peaks / denom, 0.03, 1.0)
-                    return [round(float(x), 3) for x in norm]
-        except Exception:
-            pass
-
-    # Fallback: FFmpeg raw s16le pipe at 800 Hz
+    # 1. Fast Native FFmpeg raw s16le stream at 1000 Hz with BELOW_NORMAL priority
     try:
         ff = ffmpeg_exe or "ffmpeg"
         cmd = [
@@ -896,29 +1097,76 @@ def extract_audio_waveform_peaks(
             "-i", str(media_path),
             "-vn",
             "-ac", "1",
-            "-ar", "800",
+            "-ar", "1000",
             "-f", "s16le",
             "-",
         ]
+        cflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        if hasattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS"):
+            cflags |= subprocess.BELOW_NORMAL_PRIORITY_CLASS
         res = subprocess.run(
             cmd,
             capture_output=True,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            timeout=30,
+            creationflags=cflags,
+            timeout=45,
         )
         if res.returncode == 0 and res.stdout:
             samples = np.abs(np.frombuffer(res.stdout, dtype=np.int16).astype(np.float32))
             if samples.size > 0:
-                b = min(num_buckets, max(32, samples.size))
+                if num_buckets is not None and num_buckets > 0:
+                    b = min(num_buckets, max(32, samples.size))
+                else:
+                    b = max(100, int(samples.size / 10))
                 pad_len = (b - (samples.size % b)) % b
                 if pad_len:
                     samples = np.pad(samples, (0, pad_len), mode="edge")
                 peaks = samples.reshape(b, -1).max(axis=1)
                 p99 = float(np.percentile(peaks, 99)) if peaks.size else 1.0
                 denom = max(120.0, p99)
-                norm = np.clip(peaks / denom, 0.03, 1.0)
+                norm = np.clip(peaks / denom, 0.0, 1.0)
+                # Gate background noise / room hiss below 4.5% so pauses between words are dead flat 0.0
+                gate = 0.045
+                norm = np.where(norm < gate, 0.0, (norm - gate) / (1.0 - gate))
+                # Speech syllable contrast curve (gamma 1.25)
+                norm = np.power(norm, 1.25)
+                norm = np.clip(norm, 0.0, 1.0)
                 return [round(float(x), 3) for x in norm]
     except Exception:
         pass
+
+    # 2. PyAV fallback
+    if av is not None:
+        try:
+            chunks = []
+            with av.open(str(media_path)) as container:
+                if not container.streams.audio:
+                    return None
+                a_stream = container.streams.audio[0]
+                resampler = av.AudioResampler(format="s16", layout="mono", rate=1000)
+                for frame in container.decode(a_stream):
+                    for rf in resampler.resample(frame):
+                        arr = rf.to_ndarray()
+                        chunks.append(arr.reshape(-1))
+            if chunks:
+                samples = np.abs(np.concatenate(chunks).astype(np.float32))
+                if samples.size > 0:
+                    if num_buckets is not None and num_buckets > 0:
+                        b = min(num_buckets, max(32, samples.size))
+                    else:
+                        b = max(100, int(samples.size / 10))
+                    pad_len = (b - (samples.size % b)) % b
+                    if pad_len:
+                        samples = np.pad(samples, (0, pad_len), mode="edge")
+                    peaks = samples.reshape(b, -1).max(axis=1)
+                    p99 = float(np.percentile(peaks, 99)) if peaks.size else 1.0
+                    denom = max(120.0, p99)
+                    norm = np.clip(peaks / denom, 0.0, 1.0)
+                    gate = 0.045
+                    norm = np.where(norm < gate, 0.0, (norm - gate) / (1.0 - gate))
+                    norm = np.power(norm, 1.25)
+                    norm = np.clip(norm, 0.0, 1.0)
+                    return [round(float(x), 3) for x in norm]
+        except Exception:
+            pass
 
     return None

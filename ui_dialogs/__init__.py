@@ -14,6 +14,7 @@ from .icon_picker_dialog import IconPickerDialog
 from .nle_timeline_widget import DaVinciTimelinePanel
 from .video_theater_dialog import VideoTheaterDialog
 from .color_theater_dialog import ColorTheaterDialog
+from .shortcuts_guide_dialog import ShortcutsGuideDialog
 
 __all__ = [
     "SubtitleStyleDialog",
@@ -25,4 +26,5 @@ __all__ = [
     "DaVinciTimelinePanel",
     "VideoTheaterDialog",
     "ColorTheaterDialog",
+    "ShortcutsGuideDialog",
 ]

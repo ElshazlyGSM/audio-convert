@@ -46,9 +46,12 @@ class StudioInspectorMixin:
             "silence": getattr(self, "ctx_frame_silence", None),
             "audio": getattr(self, "ctx_frame_audio", None),
             "subs": getattr(self, "ctx_frame_subs", None),
+            "export": getattr(self, "ctx_frame_export", None),
         }
         if ctx_name not in ctx_frames or ctx_frames[ctx_name] is None:
             ctx_name = "video"
+        if ctx_name != "export":
+            self._last_inspector_context_before_export = ctx_name
         self.active_inspector_context = ctx_name
 
         for k, frm in ctx_frames.items():
@@ -57,6 +60,17 @@ class StudioInspectorMixin:
                     frm.grid(row=0, column=0, sticky="nsew")
                 else:
                     frm.grid_remove()
+
+        if ctx_name == "export":
+            if hasattr(self, "add_palette"):
+                self.add_palette.grid_remove()
+            if hasattr(self, "ctx_bar"):
+                self.ctx_bar.grid_remove()
+        else:
+            if hasattr(self, "add_palette"):
+                self.add_palette.grid(row=0, column=0, sticky="ew", pady=(0, 3))
+            if hasattr(self, "ctx_bar"):
+                self.ctx_bar.grid(row=1, column=0, sticky="ew", pady=(0, 4))
 
         btn_map = {
             "video": getattr(self, "btn_ctx_video", None),
@@ -70,6 +84,23 @@ class StudioInspectorMixin:
             if btn is not None:
                 btn.configure(style="PrimaryPlayer.TButton" if k == ctx_name else "Player.TButton")
 
+        if hasattr(self, "btn_export_mode") and self.btn_export_mode:
+            is_ar = hasattr(self, "language_var") and self.language_var.get() == "العربية"
+            if ctx_name == "export":
+                self.btn_export_mode.configure(
+                    style="PrimaryPlayer.TButton",
+                    text="⬅ عودة للإعدادات" if is_ar else "⬅ Back to Settings",
+                )
+            else:
+                self.btn_export_mode.configure(
+                    style="Action.TButton",
+                    text="🚀 تصدير الفيديو" if is_ar else "🚀 Export Video",
+                )
+            try:
+                self.btn_export_mode.lift()
+            except Exception:
+                pass
+
         if ctx_name == "color":
             self._sync_studio_color_controls()
         elif ctx_name == "transition":
@@ -78,11 +109,31 @@ class StudioInspectorMixin:
             self._sync_transform_sliders_from_state()
         elif ctx_name == "overlay":
             self._update_inspector_properties()
+        elif ctx_name == "export":
+            if hasattr(self, "_refresh_master_export_summary"):
+                self._refresh_master_export_summary()
 
         if hasattr(self, "inspector_canvas") and hasattr(self, "dynamic_inspector_host"):
             self.inspector_canvas.yview_moveto(0.0)
             self.dynamic_inspector_host.update_idletasks()
             self.inspector_canvas.configure(scrollregion=self.inspector_canvas.bbox("all"))
+
+    def _toggle_export_context(self):
+        if hasattr(self, "notebook") and hasattr(self, "tab_player"):
+            try:
+                self.notebook.select(self.tab_player)
+            except Exception:
+                pass
+        if getattr(self, "active_inspector_context", None) == "export":
+            prev = getattr(self, "_last_inspector_context_before_export", "video")
+            self._show_inspector_context(prev if prev != "export" else "video")
+        else:
+            self._last_inspector_context_before_export = getattr(self, "active_inspector_context", "video")
+            self._show_inspector_context("export")
+
+    def _back_from_export(self):
+        prev = getattr(self, "_last_inspector_context_before_export", "video")
+        self._show_inspector_context(prev if prev != "export" else "video")
 
     # -------------------------------------------------------------------------
     # Color Grading Controls

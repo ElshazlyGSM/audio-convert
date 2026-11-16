@@ -1,5 +1,5 @@
 """
-Media Audio Studio - Audio & Video Processing Core
+ClipCraft Studio - Audio & Video Processing Core
 Developer: ahmed elshazly
 Email: Elshazly.gsm@gmail.com
 """
@@ -2455,9 +2455,12 @@ def get_whisper_models_dir():
     if local_dir.is_dir():
         return local_dir
     appdata = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or str(Path.home())
-    d = Path(appdata) / "Media Audio Studio" / "models" / "whisper"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    old_d = Path(appdata) / "Media Audio Studio" / "models" / "whisper"
+    new_d = Path(appdata) / "ClipCraft Studio" / "models" / "whisper"
+    if old_d.is_dir() and any(old_d.iterdir()):
+        return old_d
+    new_d.mkdir(parents=True, exist_ok=True)
+    return new_d
 
 
 def get_whisper_model_status(model_size="base", models_dir=None):

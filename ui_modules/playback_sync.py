@@ -12,7 +12,7 @@ from tkinter import messagebox
 
 try:
     import vlc
-except ImportError:
+except Exception:
     vlc = None
 
 import convert
@@ -27,13 +27,36 @@ class PlaybackSyncMixin:
     def _refresh_play_button(self):
         if not hasattr(self, "play_button"):
             return
-        self.play_button.configure(text="⏸" if self._is_playing() else "▶")
+        self.play_button.configure(text="||" if self._is_playing() else "▶")
 
     def _ensure_vlc_player(self):
+        if vlc is None:
+            return
         if self.vlc_instance is None:
-            self.vlc_instance = vlc.Instance("--no-video-title-show", "--no-plugins-cache", "--quiet", "--no-stats")
-        if self.media_player is None:
-            self.media_player = self.vlc_instance.media_player_new()
+            try:
+                self.vlc_instance = vlc.Instance(
+                    "--no-video-title-show",
+                    "--no-plugins-cache",
+                    "--quiet",
+                    "--no-stats",
+                    "--no-mouse-events",
+                    "--avcodec-hw=any",
+                    "--avcodec-threads=0",
+                    "--file-caching=1500",
+                    "--network-caching=1500",
+                    "--disc-caching=1500",
+                    "--drop-late-frames",
+                    "--skip-frames",
+                )
+            except Exception:
+                self.vlc_instance = None
+                return
+        if self.media_player is None and self.vlc_instance:
+            try:
+                self.media_player = self.vlc_instance.media_player_new()
+            except Exception:
+                self.media_player = None
+                return
         self._attach_video_surface()
 
     def _attach_video_surface(self):
@@ -47,6 +70,14 @@ class PlaybackSyncMixin:
             self.media_player.set_nsobject(surface.winfo_id())
         else:
             self.media_player.set_xwindow(surface.winfo_id())
+        # If paused, refresh frame on HWND so it never stays black
+        try:
+            if not self._is_playing():
+                cur_ms = self.media_player.get_time()
+                if cur_ms >= 0:
+                    self.media_player.set_time(cur_ms)
+        except Exception:
+            pass
 
     def selected_playback_speed(self):
         try:
@@ -150,7 +181,7 @@ class PlaybackSyncMixin:
                 self._refresh_play_button()
                 return
             if state not in {vlc.State.Ended, vlc.State.Error, vlc.State.Stopped}:
-                if getattr(self, "studio_live_preview_mode", True) and self.input_path.suffix.lower() in convert.VIDEO_EXTS:
+                if getattr(self, "studio_live_preview_mode", False) and self.input_path.suffix.lower() in convert.VIDEO_EXTS:
                     self._show_studio_canvas()
                 else:
                     self._show_vlc_surface()
@@ -175,6 +206,8 @@ class PlaybackSyncMixin:
     def _start_media_from(self, start_seconds=0, is_timeline_time=False):
         self.stop_playback(reset_position=False)
         self._ensure_vlc_player()
+        if not self.vlc_instance or not self.media_player:
+            return
 
         if is_timeline_time and hasattr(self, "nle_project") and self.nle_project.clips:
             c_idx, clip, src_sec = self.nle_project.timeline_to_source(start_seconds)
@@ -192,7 +225,7 @@ class PlaybackSyncMixin:
                 self.nle_playhead_sec = src_sec
 
         self._attach_video_surface()
-        if getattr(self, "studio_live_preview_mode", True) and self.input_path and self.input_path.suffix.lower() in convert.VIDEO_EXTS:
+        if getattr(self, "studio_live_preview_mode", False) and self.input_path and self.input_path.suffix.lower() in convert.VIDEO_EXTS:
             self._show_studio_canvas()
         else:
             self._show_vlc_surface()
@@ -214,7 +247,6 @@ class PlaybackSyncMixin:
         self.apply_video_aspect_ratio()
         self.apply_video_color_adjustments()
         self._attach_vlc_subtitles_if_available()
-        self.after(80, self._attach_video_surface)
         self._update_run_state()
         self._schedule_playback_tick()
         self._sync_live_video_overlay()
@@ -244,9 +276,13 @@ class PlaybackSyncMixin:
             if hasattr(self, "davinci_timeline"):
                 self.davinci_timeline.set_playhead(0.0)
             self._refresh_timeline_text()
-            self._sync_live_video_overlay()
         self._update_run_state()
         self._refresh_play_button()
+        if hasattr(self, "input_path") and self.input_path and self.input_path.is_file() and self.input_path.suffix.lower() in convert.VIDEO_EXTS:
+            self._show_studio_canvas()
+            tl_sec = self._current_timeline_seconds()
+            _idx, _c, src_sec = self.nle_project.timeline_to_source(tl_sec) if hasattr(self, "nle_project") else (0, None, tl_sec)
+            self._request_fast_preview_frame(src_sec, force=True)
 
     def _cancel_playback_tick(self):
         if self.playback_tick:
@@ -382,10 +418,22 @@ class PlaybackSyncMixin:
             if hasattr(self, "davinci_timeline"):
                 self.davinci_timeline.set_playhead(tl_now, auto_follow=True)
 
-            if getattr(self, "studio_live_preview_mode", True) and hasattr(self, "player_studio_canvas") and self.player_studio_canvas.winfo_ismapped():
+            th_dlg = getattr(self, "_theater_dialog", None)
+            if th_dlg is not None and th_dlg.winfo_exists():
+                tot_d = self._edited_total_duration() or getattr(self, "media_duration", 0) or 1.0
+                th_dlg.update_playback_transport(tl_now, tot_d)
+
+            if getattr(self, "studio_live_preview_mode", False) and hasattr(self, "player_studio_canvas") and self.player_studio_canvas.winfo_ismapped():
                 self._request_fast_preview_frame(src_now)
 
-        self._refresh_timeline_text()
+        self._refresh_timeline_text(playhead_only=True)
         self._refresh_play_button()
-        tick_ms = 33 if (getattr(self, "studio_live_preview_mode", True) and self.input_path and self.input_path.suffix.lower() in convert.VIDEO_EXTS) else 150
+        th_dlg = getattr(self, "_theater_dialog", None)
+        is_th_open = (th_dlg is not None and th_dlg.winfo_exists())
+        if not is_th_open and getattr(self, "video_expanded", False):
+            self.video_expanded = False
+            if hasattr(self, "expand_video_button"):
+                is_ar = (self.language_var.get() == "العربية") if hasattr(self, "language_var") else True
+                self.expand_video_button.configure(text="⛶ تكبير" if is_ar else "⛶ Fullscreen")
+        tick_ms = 33 if (getattr(self, "studio_live_preview_mode", False) and self.input_path and self.input_path.suffix.lower() in convert.VIDEO_EXTS) else 80
         self.playback_tick = self.after(tick_ms, self._schedule_playback_tick)

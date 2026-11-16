@@ -1,0 +1,8 @@
+{
+  "version": "1.0.0",
+  "release_date": "2026-11-16",
+  "title": "ClipCraft Studio Pro",
+  "changelog_ar": "• محرك تشغيل ومعاينة فيديو مستقل مدمج داخلياً لجميع أجهزة ويندوز دون الحاجة لبرامج خارجية.\n• بطاقة ترخيص فاخرة وموثقة برمجياً مع إمكانية إدارة المفاتيح.\n• نظام فحص وتحديث تلقائي ذكي متكامل داخل البرنامج.\n• تسريع وتيرة المونتاج وتصدير الفيديو بالذكاء الاصطناعي.",
+  "changelog": "• Standalone embedded video preview engine for all Windows PCs with zero external dependencies.\n• Premium verified digital license card with key management.\n• Integrated smart auto-update engine with in-app background downloading.\n• AI-accelerated video editing and export workflow.",
+  "download_url": "https://huggingface.co/datasets/Elshazly/ClipCraft/resolve/main/ClipCraft_Studio_Setup_v1.0.exe"
+}

@@ -1,0 +1,30 @@
+======================================================================
+               ClipCraft Studio Pro — Desktop NLE Studio
+               Advanced Video Editing & Audio Engineering
+======================================================================
+
+👤 Software Developer & Author:
+   ahmed elshazly
+
+📧 Official Contact, Support & Licensing Email:
+   Elshazly.gsm@gmail.com
+
+⚖️ Intellectual Property & Copyright Notice:
+   All rights reserved © 2026 ahmed elshazly.
+   This software is digitally protected by cryptographically signed RSA node locks.
+   Reverse engineering, decompilation, unauthorized modification, or redistribution
+   without express written permission from the author is strictly prohibited.
+
+✨ Key Features of ClipCraft Studio:
+   • Professional Multi-Track NLE Video & Audio Timeline.
+   • RSA-2048 Node-Locked Digital Licensing Engine with hardware binding.
+   • Comprehensive project save, restore, and auto-recovery (.ccproj / .masproj).
+   • Hardware-accelerated GPU export (Intel QSV / NVIDIA NVENC / AMD AMF).
+   • Cinematic Color Grading, LUTs, and dynamic canvas aspect ratios (9:16, 16:9, 1:1).
+   • AI Speech-to-Text Transcription and Auto-Subtitling powered by OpenAI Whisper.
+   • Intelligent automatic silence detection, ripple trimming, and parametric equalizer.
+   • High-resolution one-click cover art snapshots.
+
+======================================================================
+Click "Next" to choose installation path and proceed with installation.
+======================================================================
