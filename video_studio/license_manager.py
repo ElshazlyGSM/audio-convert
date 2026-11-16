@@ -363,44 +363,56 @@ class ActivationDialog(tk.Toplevel):
         y = max(10, (self.winfo_screenheight() - h) // 2)
         self.geometry(f"{w}x{h}+{x}+{y}")
 
+        # Win32 HWND resolution
+        self._dlg_hwnd = None
+        self._root_hwnd = None
+        try:
+            self._dlg_hwnd = ctypes.windll.user32.GetAncestor(self.winfo_id(), 2)
+            if self.parent and self.parent.winfo_exists():
+                self._root_hwnd = ctypes.windll.user32.GetAncestor(self.parent.winfo_id(), 2)
+        except Exception:
+            pass
+
         # Enable native titlebar minimize button on Windows
         self._enable_titlebar_minimize()
 
         # Build UI
         self._build_ui()
 
-        # Synchronize minimizing and modal grab safely
-        self._setup_sync_and_grab()
+        # Setup native Win32 modal & minimize synchronization (WITHOUT grab_set)
+        self._setup_win32_modal()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _enable_titlebar_minimize(self):
         """Enables the native minimize button on Windows titlebar."""
+        if not self._dlg_hwnd:
+            return
         try:
-            self.update_idletasks()
-            hwnd = ctypes.windll.user32.GetAncestor(self.winfo_id(), 2)
             GWL_STYLE = -16
             WS_MINIMIZEBOX = 0x00020000
             WS_MAXIMIZEBOX = 0x00010000
-            cur_style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_STYLE)
+            cur_style = ctypes.windll.user32.GetWindowLongW(self._dlg_hwnd, GWL_STYLE)
             new_style = (cur_style | WS_MINIMIZEBOX) & ~WS_MAXIMIZEBOX
-            ctypes.windll.user32.SetWindowLongW(hwnd, GWL_STYLE, new_style)
-            ctypes.windll.user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0027)
+            ctypes.windll.user32.SetWindowLongW(self._dlg_hwnd, GWL_STYLE, new_style)
+            ctypes.windll.user32.SetWindowPos(self._dlg_hwnd, 0, 0, 0, 0, 0, 0x0027)
         except Exception:
             pass
 
-    def _setup_sync_and_grab(self):
-        """Sets modal grab safely and synchronizes minimize/restore with parent window."""
-        try:
-            self.grab_set()
-        except Exception:
-            pass
+    def _setup_win32_modal(self):
+        """
+        Uses native Win32 modal mechanics:
+        Disables parent window so it cannot receive clicks or input,
+        WITHOUT using Tkinter's internal grab_set() which blocks minimizing.
+        This allows the native Windows minimize button, in-dialog buttons, and Win+D to work 100% natively!
+        """
+        if self._root_hwnd:
+            try:
+                ctypes.windll.user32.EnableWindow(self._root_hwnd, False)
+            except Exception:
+                pass
 
         def _on_dlg_unmap(e):
             if e.widget == self and self.wm_state() == "iconic":
-                try:
-                    self.grab_release()
-                except Exception:
-                    pass
                 if self.parent and self.parent.winfo_exists() and self.parent.wm_state() != "iconic":
                     try:
                         self.parent.iconify()
@@ -414,51 +426,21 @@ class ActivationDialog(tk.Toplevel):
                         self.parent.deiconify()
                     except Exception:
                         pass
-                self.after(150, self._safe_regrab)
+                self.after(60, self._ensure_focus)
 
         self.bind("<Unmap>", _on_dlg_unmap, add="+")
         self.bind("<Map>", _on_dlg_map, add="+")
 
-        if self.parent:
-            def _on_parent_unmap(e):
-                if e.widget == self.parent and self.parent.wm_state() == "iconic":
-                    try:
-                        self.grab_release()
-                    except Exception:
-                        pass
-                    if self.winfo_exists() and self.wm_state() != "iconic":
-                        try:
-                            self.iconify()
-                        except Exception:
-                            pass
-
-            def _on_parent_map(e):
-                if e.widget == self.parent and self.parent.wm_state() != "iconic":
-                    if self.winfo_exists() and self.wm_state() == "iconic":
-                        try:
-                            self.deiconify()
-                        except Exception:
-                            pass
-                    self.after(150, self._safe_regrab)
-
-            self.parent.bind("<Unmap>", _on_parent_unmap, add="+")
-            self.parent.bind("<Map>", _on_parent_map, add="+")
-
-    def _safe_regrab(self):
+    def _ensure_focus(self):
         try:
             if self.winfo_exists() and self.wm_state() != "iconic":
                 self.lift()
                 self.focus_force()
-                self.grab_set()
         except Exception:
             pass
 
     def minimize_app(self):
         """Allows direct one-click minimization of both the dialog and main window."""
-        try:
-            self.grab_release()
-        except Exception:
-            pass
         if self.parent and self.parent.winfo_exists():
             try:
                 self.parent.iconify()
@@ -468,6 +450,18 @@ class ActivationDialog(tk.Toplevel):
             self.iconify()
         except Exception:
             pass
+
+    def destroy(self):
+        """Re-enables the parent window in Win32 and cleans up references."""
+        if self._root_hwnd:
+            try:
+                ctypes.windll.user32.EnableWindow(self._root_hwnd, True)
+            except Exception:
+                pass
+        if self.parent and hasattr(self.parent, "_license_dialog_instance"):
+            if self.parent._license_dialog_instance is self:
+                self.parent._license_dialog_instance = None
+        super().destroy()
 
     def _build_ui(self):
         for w in self.winfo_children():
