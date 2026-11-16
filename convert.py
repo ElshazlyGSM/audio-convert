@@ -2912,9 +2912,9 @@ def transcribe_media(
     style_config=None,
     models_dir=None,
     vad_filter=True,
-    condition_on_previous_text=True,
-    repetition_penalty=1.0,
-    no_repeat_ngram_size=0,
+    condition_on_previous_text=False,
+    repetition_penalty=1.15,
+    no_repeat_ngram_size=3,
     initial_prompt=None,
     progress_callback=None,
     cancel_callback=None,
@@ -3017,18 +3017,17 @@ def transcribe_media(
     if initial_prompt is None:
         if target_lang == "ar":
             initial_prompt = (
-                "بسم الله الرحمن الرحيم. السلام عليكم ورحمة الله وبركاته. "
-                "صلى الله عليه وسلم، إن شاء الله، الحمد لله رب العالمين. "
-                "تفريغ دقيق باللغة العربية الفصحى والعامية: يعني، مين، إيه، علشان، النهاردة، زي كده."
+                "بسم الله الرحمن الرحيم، الحمد لله رب العالمين، وصلى الله وسلم على سيدنا محمد وعلى آله وصحبه أجمعين. "
+                "تفريغ صوتي دقيق باللغة العربية الفصحى والعامية مع علامات الترقيم المناسبة."
             )
         elif target_lang == "en":
             initial_prompt = "Hello and welcome. This is a clear English transcription with proper punctuation and natural sentences."
         else:
-            initial_prompt = "بسم الله الرحمن الرحيم. Hello. Accurate transcription with proper punctuation."
+            initial_prompt = "Accurate speech transcription with proper punctuation and natural formatting."
 
     vad_params = dict(
-        min_silence_duration_ms=1000,
-        threshold=0.45,
+        min_silence_duration_ms=500,
+        threshold=0.40,
         min_speech_duration_ms=250,
         speech_pad_ms=400,
     )
@@ -3043,85 +3042,83 @@ def transcribe_media(
         )
 
     transcribe_source = str(source_path)
+    temp_wav = None
     try:
-        import numpy as np
+        if cancellation_requested(cancel_callback):
+            raise CancelledError("Operation canceled")
+
+        import tempfile
+        temp_wav_fd, temp_wav_path_str = tempfile.mkstemp(suffix=".wav", prefix="clipcraft_audio_")
+        os.close(temp_wav_fd)
+        temp_wav = Path(temp_wav_path_str)
+
+        if progress_callback:
+            progress_callback(
+                1,
+                "جاري تحضير واستخراج الصوت..." if target_lang == "ar" else "Preparing audio track...",
+                0,
+                0,
+                media_duration,
+            )
+
         extract_cmd = [
             str(ffmpeg_executable()),
+            "-y",
             "-nostdin",
             "-threads", "0",
             "-i", str(source_path),
-            "-f", "s16le",
+            "-vn", "-sn", "-dn",
+            "-f", "wav",
             "-ac", "1",
             "-acodec", "pcm_s16le",
             "-ar", "16000",
-            "-",
+            str(temp_wav),
         ]
-        out_bytes = subprocess.check_output(extract_cmd, stderr=subprocess.DEVNULL, **hidden_subprocess_kwargs())
-        if len(out_bytes) > 1000:
-            transcribe_source = np.frombuffer(out_bytes, np.int16).flatten().astype(np.float32) / 32768.0
-    except Exception:
+        proc = subprocess.Popen(extract_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **hidden_subprocess_kwargs())
+        register_active_process(proc)
+        try:
+            while proc.poll() is None:
+                if cancellation_requested(cancel_callback):
+                    stop_process(proc)
+                    raise CancelledError("Operation canceled")
+                time.sleep(0.08)
+        finally:
+            unregister_active_process(proc)
+
+        if proc.returncode == 0 and temp_wav.exists() and temp_wav.stat().st_size > 1000:
+            transcribe_source = str(temp_wav)
+        else:
+            if temp_wav and temp_wav.exists():
+                temp_wav.unlink(missing_ok=True)
+                temp_wav = None
+            transcribe_source = str(source_path)
+    except CancelledError:
+        if temp_wav and temp_wav.exists():
+            temp_wav.unlink(missing_ok=True)
+        raise
+    except Exception as exc:
+        print(f"Audio extraction fallback to source path ({exc})")
         transcribe_source = str(source_path)
 
     try:
-        whisper_model = faster_whisper.WhisperModel(
-            str(model_path),
-            device=device,
-            compute_type=compute_type,
-        )
-        segments_gen, info = whisper_model.transcribe(
-            transcribe_source,
-            language=target_lang,
-            task=task,
-            beam_size=5,
-            best_of=5,
-            temperature=0.0,
-            word_timestamps=True,
-            vad_filter=vad_filter,
-            vad_parameters=vad_params,
-            condition_on_previous_text=condition_on_previous_text,
-            repetition_penalty=repetition_penalty,
-            no_repeat_ngram_size=no_repeat_ngram_size,
-            compression_ratio_threshold=2.4,
-            hallucination_silence_threshold=None,
-            initial_prompt=initial_prompt,
-        )
-        detected_lang = info.language
-        segments = []
-        for seg in segments_gen:
-            if cancellation_requested(cancel_callback):
-                raise CancelledError("Operation canceled")
-            if hasattr(seg, "words") and seg.words:
-                sub_chunks = split_words_into_subtitles(seg.words)
-            else:
-                sub_chunks = [{
-                    "start": round(seg.start, 3),
-                    "end": round(seg.end, 3),
-                    "text": seg.text.strip(),
-                }]
-            for ch in sub_chunks:
-                if not ch["text"]:
-                    continue
-                segments.append(ch)
-                if media_duration > 0:
-                    pct = min(90, max(2, int((ch["end"] / media_duration) * 100)))
-                else:
-                    pct = min(90, len(segments) * 3)
-                if progress_callback:
-                    progress_callback(pct, ch["text"], ch["start"], ch["end"], media_duration)
-    except Exception as exc:
-        if device != "cpu":
-            print(f"CUDA transcription failed ({exc}), falling back to CPU int8...")
+        cpu_cores = max(1, min(8, os.cpu_count() or 4))
+        beam_sz = 1 if device == "cpu" else 2
+        best_of_val = 1 if device == "cpu" else 2
+
+        try:
             whisper_model = faster_whisper.WhisperModel(
                 str(model_path),
-                device="cpu",
-                compute_type="int8",
+                device=device,
+                compute_type=compute_type,
+                cpu_threads=cpu_cores,
+                num_workers=1,
             )
             segments_gen, info = whisper_model.transcribe(
                 transcribe_source,
                 language=target_lang,
                 task=task,
-                beam_size=5,
-                best_of=5,
+                beam_size=beam_sz,
+                best_of=best_of_val,
                 temperature=0.0,
                 word_timestamps=True,
                 vad_filter=vad_filter,
@@ -3130,7 +3127,7 @@ def transcribe_media(
                 repetition_penalty=repetition_penalty,
                 no_repeat_ngram_size=no_repeat_ngram_size,
                 compression_ratio_threshold=2.4,
-                hallucination_silence_threshold=None,
+                hallucination_silence_threshold=2.0,
                 initial_prompt=initial_prompt,
             )
             detected_lang = info.language
@@ -3156,73 +3153,131 @@ def transcribe_media(
                         pct = min(90, len(segments) * 3)
                     if progress_callback:
                         progress_callback(pct, ch["text"], ch["start"], ch["end"], media_duration)
-        else:
-            raise
+        except Exception as exc:
+            if isinstance(exc, CancelledError) or cancellation_requested(cancel_callback):
+                raise CancelledError("Operation canceled")
+            if device != "cpu":
+                print(f"CUDA transcription failed ({exc}), falling back to CPU int8...")
+                whisper_model = faster_whisper.WhisperModel(
+                    str(model_path),
+                    device="cpu",
+                    compute_type="int8",
+                    cpu_threads=cpu_cores,
+                    num_workers=1,
+                )
+                segments_gen, info = whisper_model.transcribe(
+                    transcribe_source,
+                    language=target_lang,
+                    task=task,
+                    beam_size=1,
+                    best_of=1,
+                    temperature=0.0,
+                    word_timestamps=True,
+                    vad_filter=vad_filter,
+                    vad_parameters=vad_params,
+                    condition_on_previous_text=condition_on_previous_text,
+                    repetition_penalty=repetition_penalty,
+                    no_repeat_ngram_size=no_repeat_ngram_size,
+                    compression_ratio_threshold=2.4,
+                    hallucination_silence_threshold=2.0,
+                    initial_prompt=initial_prompt,
+                )
+                detected_lang = info.language
+                segments = []
+                for seg in segments_gen:
+                    if cancellation_requested(cancel_callback):
+                        raise CancelledError("Operation canceled")
+                    if hasattr(seg, "words") and seg.words:
+                        sub_chunks = split_words_into_subtitles(seg.words)
+                    else:
+                        sub_chunks = [{
+                            "start": round(seg.start, 3),
+                            "end": round(seg.end, 3),
+                            "text": seg.text.strip(),
+                        }]
+                    for ch in sub_chunks:
+                        if not ch["text"]:
+                            continue
+                        segments.append(ch)
+                        if media_duration > 0:
+                            pct = min(90, max(2, int((ch["end"] / media_duration) * 100)))
+                        else:
+                            pct = min(90, len(segments) * 3)
+                        if progress_callback:
+                            progress_callback(pct, ch["text"], ch["start"], ch["end"], media_duration)
+            else:
+                raise
 
-    # Subtitle translation if requested (like CapCut/NoteGPT)
-    if translate_to and translate_to not in ("none", "same", "auto", detected_lang, target_lang):
+        # Subtitle translation if requested (like CapCut/NoteGPT)
+        if translate_to and translate_to not in ("none", "same", "auto", detected_lang, target_lang):
+            if progress_callback:
+                progress_callback(
+                    92,
+                    f"Translating subtitles to {translate_to}...",
+                    media_duration,
+                    media_duration,
+                    media_duration,
+                )
+            segments = translate_segments(segments, target_lang=translate_to, cancel_callback=cancel_callback)
+
+        srt_path = output_dir / f"{source_path.stem}.srt"
+        vtt_path = output_dir / f"{source_path.stem}.vtt"
+        txt_path = output_dir / f"{source_path.stem}.txt"
+
+        srt_content = generate_srt_content(segments)
+        vtt_content = generate_vtt_content(segments)
+        txt_content = generate_txt_content(segments)
+
+        if export_srt:
+            srt_path.write_text(srt_content, encoding="utf-8")
+        if export_vtt:
+            vtt_path.write_text(vtt_content, encoding="utf-8")
+        if export_txt:
+            txt_path.write_text(txt_content, encoding="utf-8")
+
+        captioned_video_path = None
+        if burn_to_video and source_path.suffix.lower() in VIDEO_EXTS:
+            if progress_callback:
+                progress_callback(
+                    95,
+                    "Burning subtitles into video...",
+                    0,
+                    media_duration,
+                    media_duration,
+                )
+            captioned_video_path = burn_subtitles_to_video(
+                video_path=source_path,
+                srt_path=srt_path,
+                output_dir=output_dir,
+                style_config=style_config,
+                cancel_callback=cancel_callback,
+            )
+
         if progress_callback:
             progress_callback(
-                92,
-                f"Translating subtitles to {translate_to}...",
+                100,
+                "Transcription completed!",
                 media_duration,
                 media_duration,
                 media_duration,
             )
-        segments = translate_segments(segments, target_lang=translate_to, cancel_callback=cancel_callback)
 
-    srt_path = output_dir / f"{source_path.stem}.srt"
-    vtt_path = output_dir / f"{source_path.stem}.vtt"
-    txt_path = output_dir / f"{source_path.stem}.txt"
-
-    srt_content = generate_srt_content(segments)
-    vtt_content = generate_vtt_content(segments)
-    txt_content = generate_txt_content(segments)
-
-    if export_srt:
-        srt_path.write_text(srt_content, encoding="utf-8")
-    if export_vtt:
-        vtt_path.write_text(vtt_content, encoding="utf-8")
-    if export_txt:
-        txt_path.write_text(txt_content, encoding="utf-8")
-
-    captioned_video_path = None
-    if burn_to_video and source_path.suffix.lower() in VIDEO_EXTS:
-        if progress_callback:
-            progress_callback(
-                95,
-                "Burning subtitles into video...",
-                0,
-                media_duration,
-                media_duration,
-            )
-        captioned_video_path = burn_subtitles_to_video(
-            video_path=source_path,
-            srt_path=srt_path,
-            output_dir=output_dir,
-            style_config=style_config,
-            cancel_callback=cancel_callback,
-        )
-
-    if progress_callback:
-        progress_callback(
-            100,
-            "Transcription completed!",
-            media_duration,
-            media_duration,
-            media_duration,
-        )
-
-    return {
-        "text": txt_content,
-        "segments": segments,
-        "language": detected_lang,
-        "translated_to": translate_to,
-        "srt_path": srt_path if export_srt else None,
-        "vtt_path": vtt_path if export_vtt else None,
-        "txt_path": txt_path if export_txt else None,
-        "video_path": captioned_video_path,
-    }
+        return {
+            "text": txt_content,
+            "segments": segments,
+            "language": detected_lang,
+            "translated_to": translate_to,
+            "srt_path": srt_path if export_srt else None,
+            "vtt_path": vtt_path if export_vtt else None,
+            "txt_path": txt_path if export_txt else None,
+            "video_path": captioned_video_path,
+        }
+    finally:
+        if temp_wav and Path(temp_wav).exists():
+            try:
+                Path(temp_wav).unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 def get_capcut_drafts():

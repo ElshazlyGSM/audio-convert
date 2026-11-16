@@ -24,59 +24,80 @@ class SubtitlesMixin:
         # Settings Card
         settings_box = ttk.LabelFrame(parent, padding=12)
         settings_box.grid(row=0, column=0, sticky="ew", pady=(0, 8))
-        settings_box.columnconfigure(5, weight=1)
+        settings_box.columnconfigure(0, weight=1)
         self.i18n_widgets["caption_settings_group"] = settings_box
 
-        # Row 0: Model, Download Button & Language
-        self.i18n_widgets["caption_model_label"] = ttk.Label(settings_box)
-        self.i18n_widgets["caption_model_label"].grid(row=0, column=0, sticky="w")
-        self.caption_model_combo = ttk.Combobox(
-            settings_box, textvariable=self.caption_model_var, state="readonly", width=26
+        # Row 0: Three clean columns (Model, Audio Language, Translation)
+        row0_frame = ttk.Frame(settings_box)
+        row0_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        row0_frame.columnconfigure(0, weight=3)
+        row0_frame.columnconfigure(1, weight=2)
+        row0_frame.columnconfigure(2, weight=2)
+
+        # Col 0: AI Model
+        grp_model = ttk.Frame(row0_frame)
+        grp_model.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        self.i18n_widgets["caption_model_label"] = ttk.Label(
+            grp_model, text=self.text("caption_model_label"), font=("Segoe UI", 9, "bold")
         )
-        self.caption_model_combo.grid(row=0, column=1, padx=(6, 8), sticky="w")
+        self.i18n_widgets["caption_model_label"].pack(anchor="w", pady=(0, 3))
+        model_ctrl_row = ttk.Frame(grp_model)
+        model_ctrl_row.pack(fill="x")
+        self.caption_model_combo = ttk.Combobox(
+            model_ctrl_row, textvariable=self.caption_model_var, state="readonly", width=25
+        )
+        self.caption_model_combo.pack(side="left", padx=(0, 6))
         self.caption_model_combo.bind("<<ComboboxSelected>>", lambda _e: self._update_caption_model_status())
 
         self.caption_model_status_label = ttk.Label(
-            settings_box, textvariable=self.caption_model_status_var, font=("Segoe UI", 9, "bold")
+            model_ctrl_row, textvariable=self.caption_model_status_var, font=("Segoe UI", 8, "bold")
         )
-        self.caption_model_status_label.grid(row=0, column=2, padx=(0, 8), sticky="w")
+        self.caption_model_status_label.pack(side="left", padx=(0, 6))
 
         self.caption_download_model_button = ttk.Button(
-            settings_box,
+            model_ctrl_row,
             text=self.text("caption_download_model_btn"),
             command=self.download_selected_caption_model,
             style="Player.TButton",
         )
-        self.caption_download_model_button.grid(row=0, column=3, padx=(0, 14), sticky="w")
+        self.caption_download_model_button.pack(side="left")
 
-        self.i18n_widgets["caption_lang_label"] = ttk.Label(settings_box)
-        self.i18n_widgets["caption_lang_label"].grid(row=0, column=4, sticky="w")
+        # Col 1: Audio Language
+        grp_lang = ttk.Frame(row0_frame)
+        grp_lang.grid(row=0, column=1, sticky="nsew", padx=(0, 12))
+        self.i18n_widgets["caption_lang_label"] = ttk.Label(
+            grp_lang, text=self.text("caption_lang_label"), font=("Segoe UI", 9, "bold")
+        )
+        self.i18n_widgets["caption_lang_label"].pack(anchor="w", pady=(0, 3))
         self.caption_lang_combo = ttk.Combobox(
-            settings_box, textvariable=self.caption_lang_var, state="readonly", width=20
+            grp_lang, textvariable=self.caption_lang_var, state="readonly", width=20
         )
-        self.caption_lang_combo.grid(row=0, column=5, padx=(6, 0), sticky="w")
+        self.caption_lang_combo.pack(fill="x")
 
-        # Row 1: Subtitle Translation & Models Directory
-        models_dir_row = ttk.Frame(settings_box)
-        models_dir_row.grid(row=1, column=0, columnspan=6, sticky="ew", pady=(4, 6))
-
+        # Col 2: Subtitle Translation
+        grp_trans = ttk.Frame(row0_frame)
+        grp_trans.grid(row=0, column=2, sticky="nsew")
         self.i18n_widgets["caption_translate_label"] = ttk.Label(
-            models_dir_row, text=self.text("caption_translate_label"), font=("Segoe UI", 9)
+            grp_trans, text=self.text("caption_translate_label"), font=("Segoe UI", 9, "bold")
         )
-        self.i18n_widgets["caption_translate_label"].pack(side="left", padx=(0, 6))
+        self.i18n_widgets["caption_translate_label"].pack(anchor="w", pady=(0, 3))
         self.caption_translate_combo = ttk.Combobox(
-            models_dir_row, textvariable=self.caption_translate_var, state="readonly", width=22
+            grp_trans, textvariable=self.caption_translate_var, state="readonly", width=22
         )
-        self.caption_translate_combo.pack(side="left", padx=(0, 16))
+        self.caption_translate_combo.pack(fill="x")
+
+        # Row 1: Models Directory
+        models_dir_row = ttk.Frame(settings_box)
+        models_dir_row.grid(row=1, column=0, sticky="ew", pady=(2, 6))
 
         self.i18n_widgets["caption_models_dir"] = ttk.Label(
-            models_dir_row, text=self.text("caption_models_dir"), font=("Segoe UI", 9)
+            models_dir_row, text=self.text("caption_models_dir"), font=("Segoe UI", 8)
         )
         self.i18n_widgets["caption_models_dir"].pack(side="left", padx=(0, 6))
         self.caption_models_dir_path_label = ttk.Label(
-            models_dir_row, textvariable=self.caption_models_dir_var, foreground="#555555", font=("Segoe UI", 8), wraplength=260
+            models_dir_row, textvariable=self.caption_models_dir_var, foreground="#555555", font=("Segoe UI", 8), wraplength=450
         )
-        self.caption_models_dir_path_label.pack(side="left", padx=(0, 10))
+        self.caption_models_dir_path_label.pack(side="left", padx=(0, 8))
         self.caption_open_models_button = ttk.Button(
             models_dir_row,
             text=self.text("caption_open_models_dir"),
@@ -87,7 +108,7 @@ class SubtitlesMixin:
 
         # Row 2: Checkboxes
         check_row = ttk.Frame(settings_box)
-        check_row.grid(row=2, column=0, columnspan=6, sticky="w", pady=(4, 8))
+        check_row.grid(row=2, column=0, sticky="w", pady=(4, 8))
         self.caption_export_srt_check = ttk.Checkbutton(
             check_row, text=self.text("caption_export_srt"), variable=self.caption_export_srt_var
         )
@@ -107,7 +128,7 @@ class SubtitlesMixin:
 
         # Row 3: Actions Bar
         act_row = ttk.Frame(settings_box)
-        act_row.grid(row=3, column=0, columnspan=6, sticky="ew")
+        act_row.grid(row=3, column=0, sticky="ew")
         act_row.columnconfigure(4, weight=1)
 
         self.caption_start_button = ttk.Button(
@@ -856,6 +877,8 @@ class SubtitlesMixin:
         elif "كور" in trans_val or "korean" in trans_val.lower():
             trans_code = "ko"
 
+        self.caption_active_op_id = time.monotonic()
+        current_op_id = self.caption_active_op_id
         self.caption_cancel_event.clear()
         self.caption_current_result = None
         self.caption_segments_accumulated = []
@@ -865,6 +888,8 @@ class SubtitlesMixin:
         self.caption_text_view.configure(state="normal")
         self.caption_text_view.delete("1.0", "end")
         self.caption_text_view.configure(state="disabled")
+        if hasattr(self, "_refresh_bubbles_ui"):
+            self._refresh_bubbles_ui()
         self.caption_status_var.set(self.text("caption_loading"))
         self.caption_progress_bar.configure(mode="indeterminate")
         self.caption_progress_bar.start(10)
@@ -872,6 +897,8 @@ class SubtitlesMixin:
         def worker():
             try:
                 def prog_cb(pct, text, s, e, dur):
+                    if getattr(self, "caption_active_op_id", None) != current_op_id or self.caption_cancel_event.is_set():
+                        return
                     self.after(0, lambda: self._on_embedded_caption_segment(pct, text, s, e, dur))
 
                 res = convert.transcribe_media(
@@ -882,15 +909,16 @@ class SubtitlesMixin:
                     progress_callback=prog_cb,
                     cancel_callback=self.caption_cancel_event.is_set,
                 )
-                if self.caption_cancel_event.is_set():
+                if getattr(self, "caption_active_op_id", None) != current_op_id or self.caption_cancel_event.is_set():
                     self.after(0, self._on_embedded_caption_cancel)
                     return
 
                 self.after(0, lambda: self._on_embedded_caption_done(res))
             except convert.CancelledError:
-                self.after(0, self._on_embedded_caption_cancel)
+                if getattr(self, "caption_active_op_id", None) == current_op_id:
+                    self.after(0, self._on_embedded_caption_cancel)
             except Exception as exc:
-                if self.caption_cancel_event.is_set() or "cancel" in str(exc).lower():
+                if getattr(self, "caption_active_op_id", None) != current_op_id or self.caption_cancel_event.is_set() or "cancel" in str(exc).lower():
                     self.after(0, self._on_embedded_caption_cancel)
                     return
                 self.after(0, lambda: self._on_embedded_caption_error(exc))
@@ -953,6 +981,9 @@ class SubtitlesMixin:
         self.caption_text_view.configure(state="disabled")
 
     def _on_embedded_caption_done(self, res):
+        if threading.current_thread() is not threading.main_thread():
+            self.after(0, lambda: self._on_embedded_caption_done(res))
+            return
         self.caption_progress_bar.stop()
         self.caption_progress_bar.configure(mode="determinate", value=100)
         self.caption_status_var.set(self.text("caption_done"))
@@ -1071,6 +1102,9 @@ class SubtitlesMixin:
         )
 
     def _on_embedded_caption_cancel(self):
+        if threading.current_thread() is not threading.main_thread():
+            self.after(0, self._on_embedded_caption_cancel)
+            return
         self.caption_progress_bar.stop()
         self.caption_progress_bar.configure(mode="determinate", value=0)
         self.caption_status_var.set(self.text("canceled"))
@@ -1085,6 +1119,9 @@ class SubtitlesMixin:
         self._append_log(f"\n[Auto Caption] {self.text('canceled')}\n")
 
     def _on_embedded_caption_error(self, exc):
+        if threading.current_thread() is not threading.main_thread():
+            self.after(0, lambda: self._on_embedded_caption_error(exc))
+            return
         self.caption_progress_bar.stop()
         self.caption_progress_bar.configure(mode="determinate", value=0)
         self.caption_status_var.set(self.text("caption_error", error=str(exc)))
@@ -1101,11 +1138,10 @@ class SubtitlesMixin:
 
     def cancel_embedded_caption(self):
         self.caption_cancel_event.set()
+        self.caption_active_op_id = 0
         convert.abort_whisper_download()
-        self.caption_status_var.set(self.text("canceling"))
-        self.caption_stop_button.configure(state="disabled")
-        if hasattr(self, "caption_burn_cancel_button"):
-            self.caption_burn_cancel_button.configure(state="disabled")
+        convert.stop_all_active_processes()
+        self._on_embedded_caption_cancel()
 
     def copy_embedded_caption(self):
         txt = self.caption_text_view.get("1.0", "end-1c")
