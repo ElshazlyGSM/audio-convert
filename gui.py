@@ -5952,17 +5952,20 @@ class SongCoverApp(
 
 
     def _start_studio_transcription_quick(self):
-        """Starts AI audio transcription directly while staying in the Montage Studio."""
+        """Starts AI audio transcription directly, switching smoothly to the Auto-Caption Studio."""
         is_ar = self.language_var.get() == "العربية"
         if not self._single_media_file_selected():
             messagebox.showwarning(self.text("app_title"), self.text("choose_single_trim"))
             return
+        if hasattr(self, "caption_thread") and self.caption_thread and self.caption_thread.is_alive():
+            if hasattr(self, "notebook") and hasattr(self, "tab_caption"):
+                self.notebook.select(self.tab_caption)
+            return
         if hasattr(self, "export_opt_transcript_files_var"):
             self.export_opt_transcript_files_var.set(True)
         self._refresh_master_export_summary()
-        self.status_var.set(
-            "🎙️ جاري التفريغ الصوتي بالذكاء الاصطناعي في الخلفية..." if is_ar else "🎙️ Running AI audio transcription in background..."
-        )
+        if hasattr(self, "notebook") and hasattr(self, "tab_caption"):
+            self.notebook.select(self.tab_caption)
         self.start_embedded_caption()
 
     def _toggle_export_card_collapse(self):
@@ -7230,17 +7233,20 @@ class SongCoverApp(
         self._smoothed_eta_seconds = None
 
     def cancel_current_operation(self):
-        if not self.worker or not self.worker.is_alive():
+        has_worker = bool(self.worker and self.worker.is_alive())
+        has_caption = bool(hasattr(self, "caption_thread") and self.caption_thread and self.caption_thread.is_alive())
+        if not has_worker and not has_caption:
             return
-        if self.cancel_event.is_set():
-            return
-        self.cancel_event.set()
-        try:
-            convert.stop_all_active_processes()
-        except Exception:
-            pass
-        self.status_var.set(self.text("canceling"))
-        self._append_log(self.text("canceling") + "\n")
+        if has_caption:
+            self.cancel_embedded_caption()
+        if has_worker:
+            self.cancel_event.set()
+            try:
+                convert.stop_all_active_processes()
+            except Exception:
+                pass
+            self.status_var.set(self.text("canceling"))
+            self._append_log(self.text("canceling") + "\n")
 
     def _operation_canceled(self):
         return self.cancel_event.is_set()

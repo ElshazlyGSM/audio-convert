@@ -826,11 +826,20 @@ class SubtitlesMixin:
                 "faster-whisper is not installed.\nPlease run: pip install faster-whisper",
             )
             return
-        if not self.media_files:
+
+        if hasattr(self, "caption_thread") and self.caption_thread and self.caption_thread.is_alive():
+            return
+
+        target_file = None
+        if hasattr(self, "input_path") and self.input_path and Path(self.input_path).is_file():
+            target_file = Path(self.input_path)
+        elif self.media_files:
+            target_file = Path(self.media_files[0])
+
+        if not target_file or not target_file.exists():
             messagebox.showwarning(self.text("app_title"), self.text("choose_single_trim"))
             return
 
-        target_file = self.media_files[0]
         chosen_m = self.caption_model_var.get().lower()
         if "tiny" in chosen_m:
             model_name = "tiny"
@@ -883,14 +892,29 @@ class SubtitlesMixin:
         self.caption_current_result = None
         self.caption_segments_accumulated = []
 
+        is_ar = (self.language_var.get() == "العربية")
         self.caption_start_button.configure(state="disabled")
         self.caption_stop_button.configure(state="normal")
+        if hasattr(self, "btn_studio_transcribe"):
+            self.btn_studio_transcribe.configure(
+                state="disabled",
+                text="⏳ جاري التفريغ بالذكاء الاصطناعي..." if is_ar else "⏳ Transcribing..."
+            )
+        if hasattr(self, "btn_cancel_progress"):
+            self.btn_cancel_progress.grid()
+        if hasattr(self, "progress"):
+            self.progress.configure(mode="indeterminate")
+            self.progress.start(10)
+
         self.caption_text_view.configure(state="normal")
         self.caption_text_view.delete("1.0", "end")
         self.caption_text_view.configure(state="disabled")
         if hasattr(self, "_refresh_bubbles_ui"):
             self._refresh_bubbles_ui()
-        self.caption_status_var.set(self.text("caption_loading"))
+
+        init_msg = self.text("caption_loading")
+        self.caption_status_var.set(init_msg)
+        self.status_var.set(f"🎙️ {init_msg}")
         self.caption_progress_bar.configure(mode="indeterminate")
         self.caption_progress_bar.start(10)
 
@@ -933,8 +957,24 @@ class SubtitlesMixin:
             self.caption_progress_bar.configure(mode="determinate", maximum=100)
         self.caption_progress_bar.configure(value=pct)
 
-        if text.startswith("Downloading AI model") or text.startswith("جاري تحميل") or "Loading Whisper" in text:
+        if hasattr(self, "progress"):
+            if self.progress["mode"] == "indeterminate":
+                self.progress.stop()
+                self.progress.configure(mode="determinate", maximum=100)
+            self.progress.configure(value=pct)
+
+        # Filter out system and extraction status messages
+        if (
+            text.startswith("Downloading")
+            or text.startswith("جاري تحميل")
+            or text.startswith("جاري تحضير")
+            or text.startswith("جاري استخراج")
+            or text.startswith("Preparing")
+            or text.startswith("Extracting")
+            or "Whisper" in text
+        ):
             self.caption_status_var.set(text)
+            self.status_var.set(f"🎙️ {text}")
             return
 
         is_ar = self.language_var.get() == "العربية"
@@ -963,6 +1003,7 @@ class SubtitlesMixin:
                 status += f" | Elapsed: {elapsed_str} | Remaining: {eta_str}"
 
         self.caption_status_var.set(status)
+        self.status_var.set(f"🎙️ {status}")
 
         self.caption_segments_accumulated.append({"start": start, "end": end, "text": text})
         self.caption_text_view.configure(state="normal")
@@ -980,14 +1021,35 @@ class SubtitlesMixin:
         self.caption_text_view.see("end")
         self.caption_text_view.configure(state="disabled")
 
+        if self.caption_view_mode_var.get() == "bubbles":
+            if not self.caption_current_result:
+                self.caption_current_result = {"segments": self.caption_segments_accumulated}
+            else:
+                self.caption_current_result["segments"] = self.caption_segments_accumulated
+            if hasattr(self, "_refresh_bubbles_ui"):
+                self._refresh_bubbles_ui()
+
     def _on_embedded_caption_done(self, res):
         if threading.current_thread() is not threading.main_thread():
             self.after(0, lambda: self._on_embedded_caption_done(res))
             return
+        is_ar = (self.language_var.get() == "العربية")
         self.caption_progress_bar.stop()
         self.caption_progress_bar.configure(mode="determinate", value=100)
+        if hasattr(self, "progress"):
+            self.progress.stop()
+            self.progress.configure(mode="determinate", value=100)
+        if hasattr(self, "btn_cancel_progress"):
+            self.btn_cancel_progress.grid_remove()
+
         self.caption_status_var.set(self.text("caption_done"))
+        self.status_var.set(self.text("caption_done"))
         self.caption_start_button.configure(state="normal")
+        if hasattr(self, "btn_studio_transcribe"):
+            self.btn_studio_transcribe.configure(
+                state="normal",
+                text="🎙️ تفريغ بالذكاء الاصطناعي الآن" if is_ar else "🎙️ Transcribe Audio Now"
+            )
         self.caption_stop_button.configure(state="disabled")
         self.caption_model_combo.configure(state="readonly")
         self.caption_current_result = res
@@ -1105,10 +1167,23 @@ class SubtitlesMixin:
         if threading.current_thread() is not threading.main_thread():
             self.after(0, self._on_embedded_caption_cancel)
             return
+        is_ar = (self.language_var.get() == "العربية")
         self.caption_progress_bar.stop()
         self.caption_progress_bar.configure(mode="determinate", value=0)
+        if hasattr(self, "progress"):
+            self.progress.stop()
+            self.progress.configure(mode="determinate", value=0)
+        if hasattr(self, "btn_cancel_progress"):
+            self.btn_cancel_progress.grid_remove()
+
         self.caption_status_var.set(self.text("canceled"))
+        self.status_var.set(self.text("canceled"))
         self.caption_start_button.configure(state="normal")
+        if hasattr(self, "btn_studio_transcribe"):
+            self.btn_studio_transcribe.configure(
+                state="normal",
+                text="🎙️ تفريغ بالذكاء الاصطناعي الآن" if is_ar else "🎙️ Transcribe Audio Now"
+            )
         self.caption_stop_button.configure(state="disabled")
         self.caption_burn_button.configure(state="normal")
         if hasattr(self, "caption_burn_cancel_button"):
@@ -1122,10 +1197,23 @@ class SubtitlesMixin:
         if threading.current_thread() is not threading.main_thread():
             self.after(0, lambda: self._on_embedded_caption_error(exc))
             return
+        is_ar = (self.language_var.get() == "العربية")
         self.caption_progress_bar.stop()
         self.caption_progress_bar.configure(mode="determinate", value=0)
+        if hasattr(self, "progress"):
+            self.progress.stop()
+            self.progress.configure(mode="determinate", value=0)
+        if hasattr(self, "btn_cancel_progress"):
+            self.btn_cancel_progress.grid_remove()
+
         self.caption_status_var.set(self.text("caption_error", error=str(exc)))
+        self.status_var.set(self.text("caption_error", error=str(exc)))
         self.caption_start_button.configure(state="normal")
+        if hasattr(self, "btn_studio_transcribe"):
+            self.btn_studio_transcribe.configure(
+                state="normal",
+                text="🎙️ تفريغ بالذكاء الاصطناعي الآن" if is_ar else "🎙️ Transcribe Audio Now"
+            )
         self.caption_stop_button.configure(state="disabled")
         self.caption_burn_button.configure(state="normal")
         if hasattr(self, "caption_burn_cancel_button"):
