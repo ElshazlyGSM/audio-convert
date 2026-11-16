@@ -318,31 +318,156 @@ class ActivationDialog(tk.Toplevel):
     """
     def __init__(self, parent=None, is_expired: bool = False, on_success=None, is_ar: bool = False):
         super().__init__(parent)
+        self.parent = parent
         self.on_success = on_success
         self.is_expired = is_expired
         self.is_ar = is_ar
         self.activated_ok = False
 
+        # Singleton guard: if parent already has an active license dialog, destroy it cleanly
+        if parent and hasattr(parent, "_license_dialog_instance"):
+            old = getattr(parent, "_license_dialog_instance", None)
+            if old and old is not self:
+                try:
+                    if old.winfo_exists():
+                        old.destroy()
+                except Exception:
+                    pass
+            parent._license_dialog_instance = self
+
         title_str = "ClipCraft Studio — تفعيل البرنامج والترخيص" if self.is_ar else "ClipCraft Studio — License & Activation"
         self.title(title_str)
-        self.geometry("580x520")
-        self.minsize(560, 480)
+        self.geometry("580x540")
+        self.minsize(580, 520)
+        self.maxsize(580, 560)
         self.configure(bg="#0d1117")
-        self.resizable(False, False)
+
+        # Set app icon if available
+        try:
+            ico_candidates = [
+                Path(__file__).resolve().parent.parent / "app_icon.ico",
+                Path(sys.executable).resolve().parent / "app_icon.ico" if getattr(sys, "frozen", False) else None,
+                Path(getattr(sys, "_MEIPASS", "")) / "app_icon.ico" if getattr(sys, "frozen", False) else None,
+            ]
+            for ico in ico_candidates:
+                if ico and ico.exists():
+                    self.iconbitmap(str(ico))
+                    break
+        except Exception:
+            pass
 
         # Center on screen
         self.update_idletasks()
-        w, h = 580, 520
+        w, h = 580, 540
         x = max(10, (self.winfo_screenwidth() - w) // 2)
         y = max(10, (self.winfo_screenheight() - h) // 2)
         self.geometry(f"{w}x{h}+{x}+{y}")
 
-        if parent:
-            self.transient(parent)
-        self.grab_set()
+        # Enable native titlebar minimize button on Windows
+        self._enable_titlebar_minimize()
 
+        # Build UI
         self._build_ui()
+
+        # Synchronize minimizing and modal grab safely
+        self._setup_sync_and_grab()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _enable_titlebar_minimize(self):
+        """Enables the native minimize button on Windows titlebar."""
+        try:
+            self.update_idletasks()
+            hwnd = ctypes.windll.user32.GetAncestor(self.winfo_id(), 2)
+            GWL_STYLE = -16
+            WS_MINIMIZEBOX = 0x00020000
+            WS_MAXIMIZEBOX = 0x00010000
+            cur_style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_STYLE)
+            new_style = (cur_style | WS_MINIMIZEBOX) & ~WS_MAXIMIZEBOX
+            ctypes.windll.user32.SetWindowLongW(hwnd, GWL_STYLE, new_style)
+            ctypes.windll.user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0027)
+        except Exception:
+            pass
+
+    def _setup_sync_and_grab(self):
+        """Sets modal grab safely and synchronizes minimize/restore with parent window."""
+        try:
+            self.grab_set()
+        except Exception:
+            pass
+
+        def _on_dlg_unmap(e):
+            if e.widget == self and self.wm_state() == "iconic":
+                try:
+                    self.grab_release()
+                except Exception:
+                    pass
+                if self.parent and self.parent.winfo_exists() and self.parent.wm_state() != "iconic":
+                    try:
+                        self.parent.iconify()
+                    except Exception:
+                        pass
+
+        def _on_dlg_map(e):
+            if e.widget == self and self.wm_state() != "iconic":
+                if self.parent and self.parent.winfo_exists() and self.parent.wm_state() == "iconic":
+                    try:
+                        self.parent.deiconify()
+                    except Exception:
+                        pass
+                self.after(150, self._safe_regrab)
+
+        self.bind("<Unmap>", _on_dlg_unmap, add="+")
+        self.bind("<Map>", _on_dlg_map, add="+")
+
+        if self.parent:
+            def _on_parent_unmap(e):
+                if e.widget == self.parent and self.parent.wm_state() == "iconic":
+                    try:
+                        self.grab_release()
+                    except Exception:
+                        pass
+                    if self.winfo_exists() and self.wm_state() != "iconic":
+                        try:
+                            self.iconify()
+                        except Exception:
+                            pass
+
+            def _on_parent_map(e):
+                if e.widget == self.parent and self.parent.wm_state() != "iconic":
+                    if self.winfo_exists() and self.wm_state() == "iconic":
+                        try:
+                            self.deiconify()
+                        except Exception:
+                            pass
+                    self.after(150, self._safe_regrab)
+
+            self.parent.bind("<Unmap>", _on_parent_unmap, add="+")
+            self.parent.bind("<Map>", _on_parent_map, add="+")
+
+    def _safe_regrab(self):
+        try:
+            if self.winfo_exists() and self.wm_state() != "iconic":
+                self.lift()
+                self.focus_force()
+                self.grab_set()
+        except Exception:
+            pass
+
+    def minimize_app(self):
+        """Allows direct one-click minimization of both the dialog and main window."""
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        if self.parent and self.parent.winfo_exists():
+            try:
+                self.parent.iconify()
+            except Exception:
+                pass
+        try:
+            self.iconify()
+        except Exception:
+            pass
 
     def _build_ui(self):
         for w in self.winfo_children():
@@ -362,17 +487,28 @@ class ActivationDialog(tk.Toplevel):
         rem_days = status.get("remaining_days", 9999)
 
         # Header Frame
-        hdr_frame = tk.Frame(self, bg="#161b22", padx=20, pady=14)
+        hdr_frame = tk.Frame(self, bg="#161b22", padx=20, pady=12)
         hdr_frame.pack(fill="x")
 
+        top_hdr_row = tk.Frame(hdr_frame, bg="#161b22")
+        top_hdr_row.pack(fill="x")
+
         lbl_title = tk.Label(
-            hdr_frame,
+            top_hdr_row,
             text="👑 ClipCraft Studio Pro",
             font=("Segoe UI", 14, "bold"),
             fg="#e3b341",
             bg="#161b22",
         )
-        lbl_title.pack(anchor="w")
+        lbl_title.pack(side="left")
+
+        btn_min = ttk.Button(
+            top_hdr_row,
+            text="⬇️ تصغير النافذة" if is_ar else "⬇️ Minimize Window",
+            command=self.minimize_app,
+            style="Player.TButton",
+        )
+        btn_min.pack(side="right")
 
         lbl_sub = tk.Label(
             hdr_frame,
@@ -498,17 +634,28 @@ class ActivationDialog(tk.Toplevel):
         is_ar = self.is_ar
 
         # Header Frame
-        hdr_frame = tk.Frame(self, bg="#161b22", padx=20, pady=14)
+        hdr_frame = tk.Frame(self, bg="#161b22", padx=20, pady=12)
         hdr_frame.pack(fill="x")
 
+        top_hdr_row = tk.Frame(hdr_frame, bg="#161b22")
+        top_hdr_row.pack(fill="x")
+
         lbl_title = tk.Label(
-            hdr_frame,
+            top_hdr_row,
             text="🎬 ClipCraft Studio Pro",
             font=("Segoe UI", 14, "bold"),
             fg="#58a6ff",
             bg="#161b22",
         )
-        lbl_title.pack(anchor="w")
+        lbl_title.pack(side="left")
+
+        btn_min = ttk.Button(
+            top_hdr_row,
+            text="⬇️ تصغير النافذة" if is_ar else "⬇️ Minimize Window",
+            command=self.minimize_app,
+            style="Player.TButton",
+        )
+        btn_min.pack(side="right")
 
         if self.is_expired:
             sub_text = "انتهت فترة التجربة المجانية — يرجى إدخال مفتاح التفعيل للمتابعة" if is_ar else "Trial period expired — Please enter your activation key to continue"
@@ -661,6 +808,14 @@ class ActivationDialog(tk.Toplevel):
                 style="Player.TButton",
             )
             btn_later.pack(side="right")
+        else:
+            btn_min_bot = ttk.Button(
+                btn_row,
+                text="⬇️ تصغير مؤقت" if is_ar else "⬇️ Minimize",
+                command=self.minimize_app,
+                style="Player.TButton",
+            )
+            btn_min_bot.pack(side="right")
 
     def _copy_hwid(self):
         hwid = get_hardware_id()
@@ -696,6 +851,13 @@ class ActivationDialog(tk.Toplevel):
             self.lbl_msg.configure(text=err_text, fg="#f85149")
 
     def _on_close(self):
+        try:
+            if self.parent and hasattr(self.parent, "_license_dialog_instance"):
+                if self.parent._license_dialog_instance is self:
+                    self.parent._license_dialog_instance = None
+        except Exception:
+            pass
+
         if self.is_expired and not self.activated_ok:
             if self.master:
                 try:
@@ -704,3 +866,4 @@ class ActivationDialog(tk.Toplevel):
                     pass
             sys.exit(0)
         self.destroy()
+

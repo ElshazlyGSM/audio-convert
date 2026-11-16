@@ -4438,11 +4438,26 @@ class SongCoverApp(
 
     def _show_license_dialog(self, is_expired: bool = False):
         try:
+            # Singleton Guard: If an activation dialog is already open, bring it to front
+            dlg = getattr(self, "_license_dialog_instance", None)
+            if dlg is not None:
+                try:
+                    if dlg.winfo_exists():
+                        if dlg.wm_state() == "iconic":
+                            dlg.deiconify()
+                        dlg.lift()
+                        dlg.focus_force()
+                        return
+                except Exception:
+                    self._license_dialog_instance = None
+
             status = check_license_status()
             if not is_expired and status.get("state") in ("expired", "tampered"):
                 is_expired = True
             is_ar = (getattr(self, "language_var", None) and self.language_var.get() == "العربية")
-            ActivationDialog(self, is_expired=is_expired, on_success=self._on_license_activated, is_ar=is_ar)
+            self._license_dialog_instance = ActivationDialog(
+                self, is_expired=is_expired, on_success=self._on_license_activated, is_ar=is_ar
+            )
         except Exception as e:
             is_ar = (getattr(self, "language_var", None) and self.language_var.get() == "العربية")
             err_msg = f"تعذر فتح نافذة التفعيل: {e}" if is_ar else f"Failed to open activation dialog: {e}"
