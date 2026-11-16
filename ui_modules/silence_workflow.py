@@ -373,16 +373,25 @@ class SilenceWorkflowMixin:
         self.silence_analysis_result = result
         self.status_var.set(self.text("ready"))
         self.progress.configure(value=100)
-        self._recalculate_silence_summary()
-        self._refresh_silence_ui()
-        self._draw_player_visual_timeline()
+        try:
+            self._recalculate_silence_summary()
+        except Exception as e:
+            print(f"[Silence] Error in _recalculate_silence_summary: {e}")
+        try:
+            self._refresh_silence_ui()
+        except Exception as e:
+            print(f"[Silence] Error in _refresh_silence_ui: {e}")
+        try:
+            self._draw_player_visual_timeline()
+        except Exception as e:
+            print(f"[Silence] Error in _draw_player_visual_timeline: {e}")
 
     def _recalculate_silence_summary(self):
         if not self.silence_analysis_result:
             return
         noise_db, _min_dur, padding, mode = self._get_silence_params()
         silences = self.silence_analysis_result.get("silences", [])
-        tot_dur = self.silence_analysis_result.get("total_duration", self.media_duration or 0.0)
+        tot_dur = float(self.silence_analysis_result.get("total_duration") or self.media_duration or 0.0)
         stats = summarize_silence_analysis(
             total_duration=tot_dur,
             silences=silences,
@@ -392,20 +401,40 @@ class SilenceWorkflowMixin:
         )
         self.silence_analysis_result.update(stats)
         if not silences:
-            msg = self.text("silence_none_found")
+            try:
+                msg = self.text("silence_none_found", db=f"{noise_db:.1f}")
+            except Exception:
+                msg = f"No silences detected at {noise_db:.1f} dB"
         else:
-            msg = self.text(
-                "silence_summary_result",
-                count=stats["count"],
-                saved=f"{stats['saved_duration']:.1f}",
-                pct=f"{stats['saved_percent']:.1f}",
-                final=f"{stats['final_duration']:.1f}",
-            )
+            count = stats.get("silence_count", stats.get("count", len(silences)))
+            orig_str = self._format_time(tot_dur)
+            new_dur = stats.get("new_duration", stats.get("final_duration", tot_dur))
+            new_str = self._format_time(new_dur)
+            saved_sec = stats.get("saved_seconds", stats.get("saved_duration", 0.0))
+            pct_val = stats.get("saved_percent", 0.0)
+            try:
+                msg = self.text(
+                    "silence_summary_fmt",
+                    count=count,
+                    orig=orig_str,
+                    new=new_str,
+                    saved=f"{saved_sec:.1f}s",
+                    pct=f"{pct_val:.1f}",
+                )
+            except Exception:
+                msg = f"✅ Found {count} silences | Saved: {saved_sec:.1f}s ({pct_val:.1f}%)"
+
         self.silence_summary_var.set(msg)
         if hasattr(self, "davinci_timeline"):
-            self.davinci_timeline.silence_intervals = silences
-            self.davinci_timeline.redraw()
-        self._refresh_master_export_summary()
+            try:
+                self.davinci_timeline.silence_intervals = silences
+                self.davinci_timeline.redraw()
+            except Exception:
+                pass
+        try:
+            self._refresh_master_export_summary()
+        except Exception:
+            pass
 
     def _refresh_silence_ui(self):
         if not hasattr(self, "silence_list_inner"):

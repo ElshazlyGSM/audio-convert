@@ -342,6 +342,9 @@ def summarize_silence_analysis(total_duration, silences, padding_sec=0.15, mode=
         "enabled_silence_count": len(enabled_silences),
         "speech_count": len(keep_intervals),
         "keep_intervals": keep_intervals,
+        "count": len(silences or []),
+        "saved_duration": round(saved_seconds, 2),
+        "final_duration": round(new_duration, 2),
     }
 
 
