@@ -5957,10 +5957,6 @@ class SongCoverApp(
         if not self._single_media_file_selected():
             messagebox.showwarning(self.text("app_title"), self.text("choose_single_trim"))
             return
-        if hasattr(self, "caption_thread") and self.caption_thread and self.caption_thread.is_alive():
-            if hasattr(self, "notebook") and hasattr(self, "tab_caption"):
-                self.notebook.select(self.tab_caption)
-            return
         if hasattr(self, "export_opt_transcript_files_var"):
             self.export_opt_transcript_files_var.set(True)
         self._refresh_master_export_summary()
@@ -8140,11 +8136,10 @@ class SongCoverApp(
         return "normal"
 
     def _single_media_file_selected(self):
-        return bool(
-            self.input_path
-            and self.input_path.is_file()
-            and self.input_path.suffix.lower() in convert.MEDIA_EXTS
-        )
+        if not getattr(self, "input_path", None):
+            return False
+        p = Path(self.input_path)
+        return bool(p.is_file() and p.suffix.lower() in convert.MEDIA_EXTS)
 
     def video_files(self):
         return [path for path in self.media_files if path.suffix.lower() in convert.VIDEO_EXTS]

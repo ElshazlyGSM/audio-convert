@@ -46,6 +46,10 @@ try:
 except Exception:
     faster_whisper = None
 
+_CACHED_WHISPER_MODEL = None
+_CACHED_WHISPER_KEY = None
+
+
 
 
 folder = Path.cwd()
@@ -3003,15 +3007,6 @@ def transcribe_media(
     if cancellation_requested(cancel_callback):
         raise CancelledError("Operation canceled")
 
-    if progress_callback:
-        progress_callback(
-            0,
-            f"Loading Whisper model '{model_size}'...",
-            0,
-            0,
-            media_duration,
-        )
-
     target_lang = None if (not language or language == "auto") else language
 
     if initial_prompt is None:
@@ -3031,15 +3026,6 @@ def transcribe_media(
         min_speech_duration_ms=250,
         speech_pad_ms=400,
     )
-
-    if progress_callback:
-        progress_callback(
-            2,
-            "Transcribing audio...",
-            0,
-            0,
-            media_duration,
-        )
 
     transcribe_source = str(source_path)
     temp_wav = None
@@ -3105,14 +3091,46 @@ def transcribe_media(
         beam_sz = 1 if device == "cpu" else 2
         best_of_val = 1 if device == "cpu" else 2
 
+        whisper_key = (str(model_path), device, compute_type, cpu_cores)
+        global _CACHED_WHISPER_MODEL, _CACHED_WHISPER_KEY
+
+        if cancellation_requested(cancel_callback):
+            raise CancelledError("Operation canceled")
+
         try:
-            whisper_model = faster_whisper.WhisperModel(
-                str(model_path),
-                device=device,
-                compute_type=compute_type,
-                cpu_threads=cpu_cores,
-                num_workers=1,
-            )
+            if _CACHED_WHISPER_KEY == whisper_key and _CACHED_WHISPER_MODEL is not None:
+                whisper_model = _CACHED_WHISPER_MODEL
+            else:
+                if progress_callback:
+                    progress_callback(
+                        2,
+                        "جاري تحميل نموذج الذكاء الاصطناعي في الذاكرة..." if target_lang == "ar" else f"Loading AI model '{model_size}' into memory...",
+                        0,
+                        0,
+                        media_duration,
+                    )
+                whisper_model = faster_whisper.WhisperModel(
+                    str(model_path),
+                    device=device,
+                    compute_type=compute_type,
+                    cpu_threads=cpu_cores,
+                    num_workers=1,
+                )
+                _CACHED_WHISPER_MODEL = whisper_model
+                _CACHED_WHISPER_KEY = whisper_key
+
+            if cancellation_requested(cancel_callback):
+                raise CancelledError("Operation canceled")
+
+            if progress_callback:
+                progress_callback(
+                    4,
+                    "جاري التفريغ الصوتي بالذكاء الاصطناعي..." if target_lang == "ar" else "Transcribing speech with AI...",
+                    0,
+                    0,
+                    media_duration,
+                )
+
             segments_gen, info = whisper_model.transcribe(
                 transcribe_source,
                 language=target_lang,
@@ -3148,9 +3166,9 @@ def transcribe_media(
                         continue
                     segments.append(ch)
                     if media_duration > 0:
-                        pct = min(90, max(2, int((ch["end"] / media_duration) * 100)))
+                        pct = min(90, max(5, int((ch["end"] / media_duration) * 100)))
                     else:
-                        pct = min(90, len(segments) * 3)
+                        pct = min(90, max(5, len(segments) * 3))
                     if progress_callback:
                         progress_callback(pct, ch["text"], ch["start"], ch["end"], media_duration)
         except Exception as exc:
@@ -3158,13 +3176,39 @@ def transcribe_media(
                 raise CancelledError("Operation canceled")
             if device != "cpu":
                 print(f"CUDA transcription failed ({exc}), falling back to CPU int8...")
-                whisper_model = faster_whisper.WhisperModel(
-                    str(model_path),
-                    device="cpu",
-                    compute_type="int8",
-                    cpu_threads=cpu_cores,
-                    num_workers=1,
-                )
+                fallback_key = (str(model_path), "cpu", "int8", cpu_cores)
+                if _CACHED_WHISPER_KEY == fallback_key and _CACHED_WHISPER_MODEL is not None:
+                    whisper_model = _CACHED_WHISPER_MODEL
+                else:
+                    if progress_callback:
+                        progress_callback(
+                            2,
+                            "جاري تحميل نموذج الذكاء الاصطناعي (معالج CPU)..." if target_lang == "ar" else "Loading AI model (CPU fallback)...",
+                            0,
+                            0,
+                            media_duration,
+                        )
+                    whisper_model = faster_whisper.WhisperModel(
+                        str(model_path),
+                        device="cpu",
+                        compute_type="int8",
+                        cpu_threads=cpu_cores,
+                        num_workers=1,
+                    )
+                    _CACHED_WHISPER_MODEL = whisper_model
+                    _CACHED_WHISPER_KEY = fallback_key
+
+                if cancellation_requested(cancel_callback):
+                    raise CancelledError("Operation canceled")
+
+                if progress_callback:
+                    progress_callback(
+                        4,
+                        "جاري التفريغ الصوتي بالذكاء الاصطناعي (معالج CPU)..." if target_lang == "ar" else "Transcribing speech with AI (CPU)...",
+                        0,
+                        0,
+                        media_duration,
+                    )
                 segments_gen, info = whisper_model.transcribe(
                     transcribe_source,
                     language=target_lang,

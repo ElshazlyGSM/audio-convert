@@ -5,7 +5,9 @@ Handles Whisper AI captioning, translation, subtitle bubble editor, CapCut impor
 
 import os
 import sys
+import queue
 import threading
+import time
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -17,7 +19,37 @@ from ui_dialogs.subtitle_style_dialog import SubtitleStyleDialog
 class SubtitlesMixin:
     """Provides AI Captioning, subtitle bubbles, CapCut import, and burn-in controls."""
 
+    def _dispatch_caption_ui(self, fn):
+        """Thread-safe dispatch of UI updates to the main Tkinter thread."""
+        if not hasattr(self, "_caption_ui_queue"):
+            self._caption_ui_queue = queue.Queue()
+        self._caption_ui_queue.put(fn)
+
+    def _poll_caption_queue(self):
+        """Drains the caption UI queue on the Tkinter main thread."""
+        if hasattr(self, "_caption_ui_queue"):
+            while True:
+                try:
+                    fn = self._caption_ui_queue.get_nowait()
+                except queue.Empty:
+                    break
+                try:
+                    fn()
+                except Exception as exc:
+                    print(f"[Caption UI Callback Error] {exc}")
+        try:
+            self.after(30, self._poll_caption_queue)
+        except Exception:
+            pass
+
     def _build_tab_caption(self, parent):
+        if not hasattr(self, "_caption_ui_queue"):
+            self._caption_ui_queue = queue.Queue()
+        try:
+            self.after(30, self._poll_caption_queue)
+        except Exception:
+            pass
+
         parent.columnconfigure(0, weight=1)
         parent.rowconfigure(1, weight=1)
 
@@ -828,7 +860,8 @@ class SubtitlesMixin:
             return
 
         if hasattr(self, "caption_thread") and self.caption_thread and self.caption_thread.is_alive():
-            return
+            self.caption_cancel_event.set()
+            convert.stop_all_active_processes()
 
         target_file = None
         if hasattr(self, "input_path") and self.input_path and Path(self.input_path).is_file():
@@ -888,6 +921,12 @@ class SubtitlesMixin:
 
         self.caption_active_op_id = time.monotonic()
         current_op_id = self.caption_active_op_id
+        if hasattr(self, "_caption_ui_queue"):
+            while not self._caption_ui_queue.empty():
+                try:
+                    self._caption_ui_queue.get_nowait()
+                except Exception:
+                    break
         self.caption_cancel_event.clear()
         self.caption_current_result = None
         self.caption_segments_accumulated = []
@@ -923,7 +962,7 @@ class SubtitlesMixin:
                 def prog_cb(pct, text, s, e, dur):
                     if getattr(self, "caption_active_op_id", None) != current_op_id or self.caption_cancel_event.is_set():
                         return
-                    self.after(0, lambda: self._on_embedded_caption_segment(pct, text, s, e, dur))
+                    self._dispatch_caption_ui(lambda: self._on_embedded_caption_segment(pct, text, s, e, dur, op_id=current_op_id))
 
                 res = convert.transcribe_media(
                     target_file,
@@ -934,24 +973,44 @@ class SubtitlesMixin:
                     cancel_callback=self.caption_cancel_event.is_set,
                 )
                 if getattr(self, "caption_active_op_id", None) != current_op_id or self.caption_cancel_event.is_set():
-                    self.after(0, self._on_embedded_caption_cancel)
+                    self._dispatch_caption_ui(lambda: self._on_embedded_caption_cancel(op_id=current_op_id))
                     return
 
-                self.after(0, lambda: self._on_embedded_caption_done(res))
+                self._dispatch_caption_ui(lambda: self._on_embedded_caption_done(res, op_id=current_op_id))
             except convert.CancelledError:
                 if getattr(self, "caption_active_op_id", None) == current_op_id:
-                    self.after(0, self._on_embedded_caption_cancel)
+                    self._dispatch_caption_ui(lambda: self._on_embedded_caption_cancel(op_id=current_op_id))
             except Exception as exc:
                 if getattr(self, "caption_active_op_id", None) != current_op_id or self.caption_cancel_event.is_set() or "cancel" in str(exc).lower():
-                    self.after(0, self._on_embedded_caption_cancel)
+                    self._dispatch_caption_ui(lambda: self._on_embedded_caption_cancel(op_id=current_op_id))
                     return
-                self.after(0, lambda: self._on_embedded_caption_error(exc))
+                self._dispatch_caption_ui(lambda: self._on_embedded_caption_error(exc, op_id=current_op_id))
 
         self.caption_transcribe_start_time = time.monotonic()
         self.caption_thread = threading.Thread(target=worker, daemon=True)
         self.caption_thread.start()
 
-    def _on_embedded_caption_segment(self, pct, text, start, end, dur):
+    def _on_embedded_caption_segment(self, pct, text, start, end, dur, op_id=None):
+        if op_id is not None and getattr(self, "caption_active_op_id", None) != op_id:
+            return
+        # Filter out system and extraction status messages
+        if (
+            text.startswith("Downloading")
+            or text.startswith("جاري تحميل")
+            or text.startswith("جاري تحضير")
+            or text.startswith("جاري استخراج")
+            or text.startswith("جاري التفريغ الصوتي")
+            or text.startswith("Preparing")
+            or text.startswith("Extracting")
+            or text.startswith("Transcribing speech")
+            or "Whisper" in text
+            or "الذاكرة" in text
+            or "memory" in text.lower()
+        ):
+            self.caption_status_var.set(text)
+            self.status_var.set(f"🎙️ {text}")
+            return
+
         if self.caption_progress_bar["mode"] == "indeterminate":
             self.caption_progress_bar.stop()
             self.caption_progress_bar.configure(mode="determinate", maximum=100)
@@ -962,20 +1021,6 @@ class SubtitlesMixin:
                 self.progress.stop()
                 self.progress.configure(mode="determinate", maximum=100)
             self.progress.configure(value=pct)
-
-        # Filter out system and extraction status messages
-        if (
-            text.startswith("Downloading")
-            or text.startswith("جاري تحميل")
-            or text.startswith("جاري تحضير")
-            or text.startswith("جاري استخراج")
-            or text.startswith("Preparing")
-            or text.startswith("Extracting")
-            or "Whisper" in text
-        ):
-            self.caption_status_var.set(text)
-            self.status_var.set(f"🎙️ {text}")
-            return
 
         is_ar = self.language_var.get() == "العربية"
         elapsed_str = ""
@@ -1029,9 +1074,11 @@ class SubtitlesMixin:
             if hasattr(self, "_refresh_bubbles_ui"):
                 self._refresh_bubbles_ui()
 
-    def _on_embedded_caption_done(self, res):
+    def _on_embedded_caption_done(self, res, op_id=None):
+        if op_id is not None and getattr(self, "caption_active_op_id", None) != op_id:
+            return
         if threading.current_thread() is not threading.main_thread():
-            self.after(0, lambda: self._on_embedded_caption_done(res))
+            self._dispatch_caption_ui(lambda: self._on_embedded_caption_done(res, op_id=op_id))
             return
         is_ar = (self.language_var.get() == "العربية")
         self.caption_progress_bar.stop()
@@ -1163,9 +1210,11 @@ class SubtitlesMixin:
             self.text("caption_capcut_imported", count=len(res["segments"]), project=chosen_draft["name"]),
         )
 
-    def _on_embedded_caption_cancel(self):
+    def _on_embedded_caption_cancel(self, op_id=None):
+        if op_id is not None and getattr(self, "caption_active_op_id", None) != op_id and getattr(self, "caption_active_op_id", None) != 0:
+            return
         if threading.current_thread() is not threading.main_thread():
-            self.after(0, self._on_embedded_caption_cancel)
+            self._dispatch_caption_ui(lambda: self._on_embedded_caption_cancel(op_id=op_id))
             return
         is_ar = (self.language_var.get() == "العربية")
         self.caption_progress_bar.stop()
@@ -1193,9 +1242,11 @@ class SubtitlesMixin:
         self._update_caption_model_status()
         self._append_log(f"\n[Auto Caption] {self.text('canceled')}\n")
 
-    def _on_embedded_caption_error(self, exc):
+    def _on_embedded_caption_error(self, exc, op_id=None):
+        if op_id is not None and getattr(self, "caption_active_op_id", None) != op_id:
+            return
         if threading.current_thread() is not threading.main_thread():
-            self.after(0, lambda: self._on_embedded_caption_error(exc))
+            self._dispatch_caption_ui(lambda: self._on_embedded_caption_error(exc, op_id=op_id))
             return
         is_ar = (self.language_var.get() == "العربية")
         self.caption_progress_bar.stop()
