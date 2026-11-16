@@ -836,7 +836,7 @@ class SubtitlesMixin:
 
         def worker():
             try:
-                self.after(0, lambda: self.caption_status_var.set(self.text("caption_translating", target=trans_code)))
+                self._dispatch_caption_ui(lambda: self.caption_status_var.set(self.text("caption_translating", target=trans_code)))
                 orig_segments = self.caption_current_result["segments"] if self.caption_current_result else self.caption_segments_accumulated
                 translated = convert.translate_segments(orig_segments, target_lang=trans_code)
                 if self.caption_current_result:
@@ -844,10 +844,10 @@ class SubtitlesMixin:
                     self.caption_current_result["text"] = "\n".join(s["text"] for s in translated)
                     self.caption_current_result["srt"] = convert.generate_srt_content(translated)
                 self.caption_segments_accumulated = translated
-                self.after(0, self._caption_view_mode_changed)
-                self.after(0, lambda: self.caption_status_var.set(self.text("caption_translate_done", target=trans_code)))
+                self._dispatch_caption_ui(self._caption_view_mode_changed)
+                self._dispatch_caption_ui(lambda: self.caption_status_var.set(self.text("caption_translate_done", target=trans_code)))
             except Exception as exc:
-                self.after(0, lambda: self.caption_status_var.set(f"Translation error: {exc}"))
+                self._dispatch_caption_ui(lambda: self.caption_status_var.set(f"Translation error: {exc}"))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -862,6 +862,10 @@ class SubtitlesMixin:
         if hasattr(self, "caption_thread") and self.caption_thread and self.caption_thread.is_alive():
             self.caption_cancel_event.set()
             convert.stop_all_active_processes()
+            try:
+                self.caption_thread.join(timeout=1.0)
+            except Exception:
+                pass
 
         target_file = None
         if hasattr(self, "input_path") and self.input_path and Path(self.input_path).is_file():
@@ -969,6 +973,7 @@ class SubtitlesMixin:
                     model_size=model_name,
                     language=lang_code,
                     translate_to=trans_code,
+                    ui_lang="ar" if is_ar else "en",
                     progress_callback=prog_cb,
                     cancel_callback=self.caption_cancel_event.is_set,
                 )
@@ -1000,9 +1005,19 @@ class SubtitlesMixin:
             or text.startswith("جاري تحضير")
             or text.startswith("جاري استخراج")
             or text.startswith("جاري التفريغ الصوتي")
+            or text.startswith("جاري فحص")
+            or text.startswith("تم كشف")
+            or text.startswith("جاري ترجمة")
+            or text.startswith("دمج الترجمة")
+            or text.startswith("تم التفريغ")
             or text.startswith("Preparing")
             or text.startswith("Extracting")
             or text.startswith("Transcribing speech")
+            or text.startswith("Analyzing audio")
+            or text.startswith("Detected language")
+            or text.startswith("Translating")
+            or text.startswith("Burning subtitles")
+            or text.startswith("Transcription completed")
             or "Whisper" in text
             or "الذاكرة" in text
             or "memory" in text.lower()
@@ -1389,7 +1404,7 @@ class SubtitlesMixin:
         def worker():
             try:
                 def prog_cb(pct, msg, cur, dur, tot):
-                    self.after(0, lambda: self._on_embedded_burn_progress(pct, cur, tot, burn_start_time))
+                    self._dispatch_caption_ui(lambda: self._on_embedded_burn_progress(pct, cur, tot, burn_start_time))
 
                 out_vid = convert.burn_subtitles_to_video(
                     target_video,
@@ -1400,16 +1415,16 @@ class SubtitlesMixin:
                     progress_callback=prog_cb,
                 )
                 if self.caption_cancel_event.is_set():
-                    self.after(0, self._on_embedded_caption_cancel)
+                    self._dispatch_caption_ui(self._on_embedded_caption_cancel)
                     return
-                self.after(0, lambda: self._on_embedded_burn_done(out_vid))
+                self._dispatch_caption_ui(lambda: self._on_embedded_burn_done(out_vid))
             except convert.CancelledError:
-                self.after(0, self._on_embedded_caption_cancel)
+                self._dispatch_caption_ui(self._on_embedded_caption_cancel)
             except Exception as exc:
                 if self.caption_cancel_event.is_set() or "cancel" in str(exc).lower():
-                    self.after(0, self._on_embedded_caption_cancel)
+                    self._dispatch_caption_ui(self._on_embedded_caption_cancel)
                     return
-                self.after(0, lambda: self._on_embedded_caption_error(exc))
+                self._dispatch_caption_ui(lambda: self._on_embedded_caption_error(exc))
 
         threading.Thread(target=worker, daemon=True).start()
 

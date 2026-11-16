@@ -2922,6 +2922,7 @@ def transcribe_media(
     initial_prompt=None,
     progress_callback=None,
     cancel_callback=None,
+    ui_lang="ar",
     **kwargs,
 ):
     """
@@ -2930,6 +2931,8 @@ def transcribe_media(
     Generates .srt, .vtt, and .txt files.
     Optionally burns subtitles into video.
     """
+    is_ar_ui = (ui_lang == "ar")
+
     if "cancel_check" in kwargs and cancel_callback is None:
         cancel_callback = kwargs.pop("cancel_check")
 
@@ -3041,7 +3044,7 @@ def transcribe_media(
         if progress_callback:
             progress_callback(
                 1,
-                "جاري تحضير واستخراج الصوت..." if target_lang == "ar" else "Preparing audio track...",
+                "جاري تحضير واستخراج الصوت..." if is_ar_ui else "Preparing audio track...",
                 0,
                 0,
                 media_duration,
@@ -3104,7 +3107,7 @@ def transcribe_media(
                 if progress_callback:
                     progress_callback(
                         2,
-                        "جاري تحميل نموذج الذكاء الاصطناعي في الذاكرة..." if target_lang == "ar" else f"Loading AI model '{model_size}' into memory...",
+                        f"جاري تحميل نموذج الذكاء الاصطناعي ({model_size}) في الذاكرة..." if is_ar_ui else f"Loading AI model '{model_size}' into memory...",
                         0,
                         0,
                         media_duration,
@@ -3125,7 +3128,7 @@ def transcribe_media(
             if progress_callback:
                 progress_callback(
                     4,
-                    "جاري التفريغ الصوتي بالذكاء الاصطناعي..." if target_lang == "ar" else "Transcribing speech with AI...",
+                    "جاري فحص الصوت وتحليله بالذكاء الاصطناعي..." if is_ar_ui else "Analyzing audio speech with AI...",
                     0,
                     0,
                     media_duration,
@@ -3149,6 +3152,10 @@ def transcribe_media(
                 initial_prompt=initial_prompt,
             )
             detected_lang = info.language
+            detected_lang_name = WHISPER_LANGUAGES.get(detected_lang, detected_lang)
+            if progress_callback:
+                detect_msg = f"تم كشف لغة الصوت: {detected_lang_name} — جاري التفريغ والكتابة..." if is_ar_ui else f"Detected language: {detected_lang_name} — Transcribing..."
+                progress_callback(5, detect_msg, 0, 0, media_duration)
             segments = []
             for seg in segments_gen:
                 if cancellation_requested(cancel_callback):
@@ -3183,7 +3190,7 @@ def transcribe_media(
                     if progress_callback:
                         progress_callback(
                             2,
-                            "جاري تحميل نموذج الذكاء الاصطناعي (معالج CPU)..." if target_lang == "ar" else "Loading AI model (CPU fallback)...",
+                            "جاري تحميل نموذج الذكاء الاصطناعي (معالج CPU)..." if is_ar_ui else "Loading AI model (CPU fallback)...",
                             0,
                             0,
                             media_duration,
@@ -3204,7 +3211,7 @@ def transcribe_media(
                 if progress_callback:
                     progress_callback(
                         4,
-                        "جاري التفريغ الصوتي بالذكاء الاصطناعي (معالج CPU)..." if target_lang == "ar" else "Transcribing speech with AI (CPU)...",
+                        "جاري فحص الصوت وتحليله بالذكاء الاصطناعي (معالج CPU)..." if is_ar_ui else "Analyzing audio speech with AI (CPU)...",
                         0,
                         0,
                         media_duration,
@@ -3227,6 +3234,10 @@ def transcribe_media(
                     initial_prompt=initial_prompt,
                 )
                 detected_lang = info.language
+                detected_lang_name = WHISPER_LANGUAGES.get(detected_lang, detected_lang)
+                if progress_callback:
+                    detect_msg = f"تم كشف لغة الصوت: {detected_lang_name} — جاري التفريغ والكتابة..." if is_ar_ui else f"Detected language: {detected_lang_name} — Transcribing..."
+                    progress_callback(5, detect_msg, 0, 0, media_duration)
                 segments = []
                 for seg in segments_gen:
                     if cancellation_requested(cancel_callback):
@@ -3255,9 +3266,11 @@ def transcribe_media(
         # Subtitle translation if requested (like CapCut/NoteGPT)
         if translate_to and translate_to not in ("none", "same", "auto", detected_lang, target_lang):
             if progress_callback:
+                t_lang_name = WHISPER_LANGUAGES.get(translate_to, translate_to)
+                msg = f"جاري ترجمة النصوص إلى {t_lang_name}..." if is_ar_ui else f"Translating subtitles to {t_lang_name}..."
                 progress_callback(
                     92,
-                    f"Translating subtitles to {translate_to}...",
+                    msg,
                     media_duration,
                     media_duration,
                     media_duration,
@@ -3284,7 +3297,7 @@ def transcribe_media(
             if progress_callback:
                 progress_callback(
                     95,
-                    "Burning subtitles into video...",
+                    "دمج الترجمة مع الفيديو..." if is_ar_ui else "Burning subtitles into video...",
                     0,
                     media_duration,
                     media_duration,
@@ -3300,7 +3313,7 @@ def transcribe_media(
         if progress_callback:
             progress_callback(
                 100,
-                "Transcription completed!",
+                "تم التفريغ بنجاح!" if is_ar_ui else "Transcription completed!",
                 media_duration,
                 media_duration,
                 media_duration,
