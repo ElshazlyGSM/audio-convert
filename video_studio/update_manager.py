@@ -21,7 +21,12 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 APP_VERSION = "1.0.0"
-DEFAULT_MANIFEST_URL = "https://raw.githubusercontent.com/Elshazly-gsm/ClipCraft-Studio/main/version.json"
+MANIFEST_CANDIDATES = [
+    "https://raw.githubusercontent.com/ElshazlyGSM/audio-convert/main/version.json",
+    "https://raw.githubusercontent.com/ElshazlyGSM/ClipCraft-Studio/main/version.json",
+    "https://raw.githubusercontent.com/Elshazly-gsm/ClipCraft-Studio/main/version.json",
+]
+DEFAULT_MANIFEST_URL = MANIFEST_CANDIDATES[0]
 
 
 def parse_version_tuple(v_str: str) -> Tuple[int, ...]:
@@ -38,7 +43,7 @@ def parse_version_tuple(v_str: str) -> Tuple[int, ...]:
     return tuple(parts)
 
 
-def check_for_updates(manifest_url: str = DEFAULT_MANIFEST_URL, timeout: int = 5) -> Dict[str, Any]:
+def check_for_updates(manifest_url: Optional[str] = None, timeout: int = 5) -> Dict[str, Any]:
     """
     Connects to the remote manifest JSON to inspect latest version.
     Returns:
@@ -54,6 +59,8 @@ def check_for_updates(manifest_url: str = DEFAULT_MANIFEST_URL, timeout: int = 5
         "error": str,
       }
     """
+    urls_to_try = [manifest_url] if manifest_url else MANIFEST_CANDIDATES
+
     result: Dict[str, Any] = {
         "success": False,
         "has_update": False,
@@ -66,42 +73,46 @@ def check_for_updates(manifest_url: str = DEFAULT_MANIFEST_URL, timeout: int = 5
         "error": "",
     }
 
-    try:
-        req = urllib.request.Request(
-            manifest_url,
-            headers={
-                "User-Agent": f"ClipCraftStudio/{APP_VERSION} (Windows NT)",
-                "Accept": "application/json",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=timeout) as response:
-            if response.status != 200:
-                result["error"] = f"HTTP {response.status}"
+    last_error = ""
+    for target_url in urls_to_try:
+        try:
+            req = urllib.request.Request(
+                target_url,
+                headers={
+                    "User-Agent": f"ClipCraftStudio/{APP_VERSION} (Windows NT)",
+                    "Accept": "application/json",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                if response.status != 200:
+                    last_error = f"HTTP {response.status}"
+                    continue
+                raw_data = response.read().decode("utf-8")
+                data = json.loads(raw_data)
+
+                latest_v = str(data.get("version", APP_VERSION)).strip()
+                cur_tuple = parse_version_tuple(APP_VERSION)
+                lat_tuple = parse_version_tuple(latest_v)
+
+                result["success"] = True
+                result["latest_version"] = latest_v
+                result["release_date"] = data.get("release_date", "")
+                result["title"] = data.get("title", "")
+                result["changelog"] = data.get("changelog", "")
+                result["changelog_ar"] = data.get("changelog_ar", "")
+                result["download_url"] = data.get("download_url", "https://github.com/ElshazlyGSM/audio-convert/releases")
+                result["has_update"] = (lat_tuple > cur_tuple)
                 return result
-            raw_data = response.read().decode("utf-8")
-            data = json.loads(raw_data)
+        except urllib.error.HTTPError as e:
+            last_error = f"HTTP {e.code}"
+        except urllib.error.URLError as e:
+            last_error = f"Network error ({e.reason})"
+        except Exception as e:
+            last_error = str(e)
 
-            latest_v = str(data.get("version", APP_VERSION)).strip()
-            cur_tuple = parse_version_tuple(APP_VERSION)
-            lat_tuple = parse_version_tuple(latest_v)
-
-            result["success"] = True
-            result["latest_version"] = latest_v
-            result["release_date"] = data.get("release_date", "")
-            result["title"] = data.get("title", "")
-            result["changelog"] = data.get("changelog", "")
-            result["changelog_ar"] = data.get("changelog_ar", "")
-            result["download_url"] = data.get("download_url", "https://github.com/Elshazly-gsm/ClipCraft-Studio/releases")
-            result["has_update"] = (lat_tuple > cur_tuple)
-            return result
-    except urllib.error.URLError as e:
-        result["error"] = f"Network connection unavailable ({e.reason})"
-    except urllib.error.HTTPError as e:
-        result["error"] = f"Server returned error {e.code}"
-    except Exception as e:
-        result["error"] = str(e)
-
+    result["error"] = last_error or "Unable to reach update server"
     return result
+
 
 
 class UpdateDialog(tk.Toplevel):
