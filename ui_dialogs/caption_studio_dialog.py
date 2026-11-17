@@ -36,11 +36,11 @@ class CaptionStudioDialog(tk.Toplevel):
         self.is_ar = is_ar
 
         self.model_options = [
-            ("small", "Small (⚡ حوالي 465MB - موصى به: توازن ممتاز ودقة عالية)" if is_ar else "Small (⚡ ~465MB - Recommended: High Accuracy & Balanced)"),
-            ("base", "Base (🚀 حوالي 140MB - خفيف وسريع)" if is_ar else "Base (🚀 ~140MB - Fast & Lightweight)"),
-            ("turbo", "Turbo (💎 حوالي 1.5GB - أعلى دقة مثل CapCut و NoteGPT)" if is_ar else "Turbo (💎 ~1.5GB - Max Accuracy / CapCut & NoteGPT)"),
-            ("tiny", "Tiny (⚠️ حوالي 75MB - فائق السرعة / دقة منخفضة)" if is_ar else "Tiny (⚠️ ~75MB - Ultra Fast, Low Accuracy)"),
-            ("medium", "Medium (💎 حوالي 1.5GB - دقة عالية جداً)" if is_ar else "Medium (~1.5GB - Very High Accuracy)"),
+            ("small", "Small (465 MB) - موصى به: متوازن ودقة عالية" if is_ar else "Small (465 MB) - Recommended: High Accuracy & Balanced"),
+            ("base", "Base (140 MB) - خفيف وسريع" if is_ar else "Base (140 MB) - Fast & Lightweight"),
+            ("turbo", "Turbo (1.5 GB) - أعلى دقة واحترافي (NoteGPT/CapCut)" if is_ar else "Turbo (1.5 GB) - Max Accuracy / Professional (CapCut style)"),
+            ("tiny", "Tiny (75 MB) - فائق السرعة (دقة منخفضة)" if is_ar else "Tiny (75 MB) - Ultra Fast (Low Accuracy)"),
+            ("medium", "Medium (1.5 GB) - دقة عالية جداً" if is_ar else "Medium (1.5 GB) - Very High Accuracy"),
         ]
 
         self.lang_options = [
@@ -153,9 +153,9 @@ class CaptionStudioDialog(tk.Toplevel):
             textvariable=self.model_var,
             values=[opt[1] for opt in self.model_options],
             state="readonly",
-            width=28,
+            width=42,
         )
-        self.model_combo.grid(row=0, column=1, sticky="w", padx=(0, 16))
+        self.model_combo.grid(row=0, column=1, sticky="ew", padx=(0, 16))
         self.model_combo.bind("<<ComboboxSelected>>", self._update_model_status)
 
         self.model_status_var = tk.StringVar(value="")

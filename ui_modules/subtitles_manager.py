@@ -69,30 +69,32 @@ class SubtitlesMixin:
         # Col 0: AI Model
         grp_model = ttk.Frame(row0_frame)
         grp_model.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
-        self.i18n_widgets["caption_model_label"] = ttk.Label(
-            grp_model, text=self.text("caption_model_label"), font=("Segoe UI", 9, "bold")
-        )
-        self.i18n_widgets["caption_model_label"].pack(anchor="w", pady=(0, 3))
-        model_ctrl_row = ttk.Frame(grp_model)
-        model_ctrl_row.pack(fill="x")
-        self.caption_model_combo = ttk.Combobox(
-            model_ctrl_row, textvariable=self.caption_model_var, state="readonly", width=25
-        )
-        self.caption_model_combo.pack(side="left", padx=(0, 6))
-        self.caption_model_combo.bind("<<ComboboxSelected>>", lambda _e: self._update_caption_model_status())
 
-        self.caption_model_status_label = ttk.Label(
-            model_ctrl_row, textvariable=self.caption_model_status_var, font=("Segoe UI", 8, "bold")
+        model_hdr = ttk.Frame(grp_model)
+        model_hdr.pack(fill="x", pady=(0, 3))
+
+        self.i18n_widgets["caption_model_label"] = ttk.Label(
+            model_hdr, text=self.text("caption_model_label"), font=("Segoe UI", 9, "bold")
         )
-        self.caption_model_status_label.pack(side="left", padx=(0, 6))
+        self.i18n_widgets["caption_model_label"].pack(side="left")
 
         self.caption_download_model_button = ttk.Button(
-            model_ctrl_row,
+            model_hdr,
             text=self.text("caption_download_model_btn"),
             command=self.download_selected_caption_model,
             style="Player.TButton",
         )
-        self.caption_download_model_button.pack(side="left")
+
+        self.caption_model_status_label = ttk.Label(
+            model_hdr, textvariable=self.caption_model_status_var, font=("Segoe UI", 8, "bold")
+        )
+        self.caption_model_status_label.pack(side="right", padx=(4, 0))
+
+        self.caption_model_combo = ttk.Combobox(
+            grp_model, textvariable=self.caption_model_var, state="readonly", width=45
+        )
+        self.caption_model_combo.pack(fill="x", expand=True)
+        self.caption_model_combo.bind("<<ComboboxSelected>>", lambda _e: self._update_caption_model_status())
 
         # Col 1: Audio Language
         grp_lang = ttk.Frame(row0_frame)
@@ -389,11 +391,11 @@ class SubtitlesMixin:
     def _refresh_caption_options(self):
         is_ar = self.language_var.get() == "العربية"
         models = [
-            "Small (⚡ حوالي 465MB - موصى به: توازن ممتاز ودقة عالية)" if is_ar else "Small (⚡ ~465MB - Recommended: High Accuracy & Balanced)",
-            "Base (🚀 حوالي 140MB - خفيف وسريع)" if is_ar else "Base (🚀 ~140MB - Fast & Lightweight)",
-            "Turbo (💎 حوالي 1.5GB - أعلى دقة مثل CapCut و NoteGPT)" if is_ar else "Turbo (💎 ~1.5GB - Max Accuracy / CapCut & NoteGPT)",
-            "Tiny (⚠️ حوالي 75MB - فائق السرعة / دقة منخفضة)" if is_ar else "Tiny (⚠️ ~75MB - Ultra Fast, Low Accuracy)",
-            "Medium (💎 حوالي 1.5GB - دقة عالية جداً)" if is_ar else "Medium (~1.5GB - Very High Accuracy)",
+            "Small (465 MB) - موصى به: متوازن ودقة عالية" if is_ar else "Small (465 MB) - Recommended: High Accuracy & Balanced",
+            "Base (140 MB) - خفيف وسريع" if is_ar else "Base (140 MB) - Fast & Lightweight",
+            "Turbo (1.5 GB) - أعلى دقة واحترافي (NoteGPT/CapCut)" if is_ar else "Turbo (1.5 GB) - Max Accuracy / Professional (CapCut style)",
+            "Tiny (75 MB) - فائق السرعة (دقة منخفضة)" if is_ar else "Tiny (75 MB) - Ultra Fast (Low Accuracy)",
+            "Medium (1.5 GB) - دقة عالية جداً" if is_ar else "Medium (1.5 GB) - Very High Accuracy",
         ]
         self.caption_model_combo.configure(values=models)
         cur_m = self.caption_model_var.get().lower()
@@ -472,7 +474,7 @@ class SubtitlesMixin:
             if hasattr(self, "caption_model_status_label"):
                 self.caption_model_status_label.configure(foreground="#008800")
             if hasattr(self, "caption_download_model_button"):
-                self.caption_download_model_button.configure(state="disabled", text=self.text("caption_model_ready_btn"))
+                self.caption_download_model_button.pack_forget()
         else:
             self.caption_model_status_var.set(
                 self.text("caption_model_status_needs_download", size=int(status["estimated_mb"]))
@@ -480,7 +482,11 @@ class SubtitlesMixin:
             if hasattr(self, "caption_model_status_label"):
                 self.caption_model_status_label.configure(foreground="#cc6600")
             if hasattr(self, "caption_download_model_button"):
+                self.caption_download_model_button.pack(side="right")
                 self.caption_download_model_button.configure(state="normal", text=self.text("caption_download_model_btn"))
+                if hasattr(self, "caption_model_status_label"):
+                    self.caption_model_status_label.pack_forget()
+                    self.caption_model_status_label.pack(side="right", padx=(4, 6))
 
     def download_selected_caption_model(self):
         chosen_m = self.caption_model_var.get().lower()
