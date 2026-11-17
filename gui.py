@@ -856,6 +856,7 @@ from video_studio.license_manager import (
     get_hardware_id,
     format_plan_name,
 )
+from video_studio.tooltip import add_tooltip
 from ui_modules import (
     MasterExportMixin,
     StudioCanvasMixin,
@@ -1676,6 +1677,7 @@ class SongCoverApp(
             style="Action.TButton",
         )
         self.choose_file_button.pack(side="left", padx=(0, 4))
+        add_tooltip(self.choose_file_button, "اختيار ملف صوتي أو فيديو للبدء في معالجته ومونتاجه", "Choose an audio or video file to start editing", app=self)
 
         self.choose_folder_button = ttk.Button(
             hdr_left,
@@ -1684,6 +1686,7 @@ class SongCoverApp(
             style="Player.TButton",
         )
         self.choose_folder_button.pack(side="left", padx=(0, 8))
+        add_tooltip(self.choose_folder_button, "اختيار مجلد كامل لتحويل كافة الملفات بضغطة واحدة", "Select an entire folder for batch conversion", app=self)
 
         self.loaded_filename_var = tk.StringVar(value="")
         self.loaded_filename_label = ttk.Label(
@@ -1701,6 +1704,7 @@ class SongCoverApp(
             style="Player.TButton",
         )
         self.open_input_button.pack(side="left", padx=(0, 3))
+        add_tooltip(self.open_input_button, "فتح المجلد الحاوي للملف الحالي في مستكشف ويندوز", "Open folder containing the input file", app=self)
 
         self.open_output_button = ttk.Button(
             hdr_left,
@@ -1709,6 +1713,7 @@ class SongCoverApp(
             style="Player.TButton",
         )
         self.open_output_button.pack(side="left", padx=(0, 3))
+        add_tooltip(self.open_output_button, "فتح مجلد المخرجات حيث تُحفظ الملفات المصدرة", "Open the output export folder", app=self)
 
         self.restore_session_button = ttk.Button(
             hdr_left,
@@ -1717,6 +1722,7 @@ class SongCoverApp(
             style="Player.TButton",
         )
         self.restore_session_button.pack(side="left", padx=(0, 6))
+        add_tooltip(self.restore_session_button, "استعادة التعديلات والملفات المفتوحة في آخر جلسة سابقة", "Restore previous session edits and timeline", app=self)
 
         hdr_right = ttk.Frame(header)
         hdr_right.pack(side="right", fill="y")
@@ -1729,6 +1735,7 @@ class SongCoverApp(
         )
         self.settings_button.pack(side="right", padx=(4, 0))
         self.i18n_widgets["settings_button"] = self.settings_button
+        add_tooltip(self.settings_button, "فتح نافذة الإعدادات الشاملة للبرنامج والتخصيص", "Open application settings and preferences", app=self)
 
         self.about_button = ttk.Button(
             hdr_right,
@@ -1738,6 +1745,7 @@ class SongCoverApp(
         )
         self.about_button.pack(side="right", padx=(4, 0))
         self.i18n_widgets["about_button"] = self.about_button
+        add_tooltip(self.about_button, "معلومات عن البرنامج والإصدار وحقوق المطور", "About ClipCraft Studio and developer info", app=self)
 
         self.theme_button = ttk.Button(
             hdr_right,
@@ -1747,6 +1755,7 @@ class SongCoverApp(
         )
         self.theme_button.pack(side="right", padx=(4, 0))
         self.i18n_widgets["theme_button"] = self.theme_button
+        add_tooltip(self.theme_button, "التبديل بين الوضع الليلي الداكن والوضع النهاري الفاتح (Ctrl+D)", "Toggle Dark / Light theme mode (Ctrl+D)", app=self)
 
         self.language_combo = ttk.Combobox(
             hdr_right,
@@ -1757,6 +1766,7 @@ class SongCoverApp(
         )
         self.language_combo.pack(side="right", padx=(4, 0))
         self.language_combo.bind("<<ComboboxSelected>>", self._language_changed)
+        add_tooltip(self.language_combo, "تغيير لغة الواجهة الفورية (العربية / English)", "Change user interface language", app=self)
 
         self.i18n_widgets["language_label"] = ttk.Label(hdr_right)
         self.i18n_widgets["language_label"].pack(side="right", padx=(8, 2))
@@ -1772,6 +1782,7 @@ class SongCoverApp(
             width=11,
         )
         self.btn_shortcuts_guide.pack(side="right", padx=(6, 2))
+        add_tooltip(self.btn_shortcuts_guide, "عرض الدليل الكامل لاختصارات لوحة المفاتيح والتحكم السريع", "Open keyboard shortcuts cheat sheet", app=self)
 
         ttk.Separator(hdr_right, orient="vertical").pack(side="right", fill="y", padx=(6, 6))
 
@@ -1783,6 +1794,7 @@ class SongCoverApp(
             style="Player.TButton",
         )
         self.btn_recent_proj.pack(side="right", padx=(2, 0))
+        add_tooltip(self.btn_recent_proj, "قائمة المشاريع الأخيرة التي تم العمل عليها مؤخراً", "List of recent projects", app=self)
 
         self.btn_open_proj = ttk.Button(
             hdr_right,
@@ -1791,6 +1803,7 @@ class SongCoverApp(
             style="Player.TButton",
         )
         self.btn_open_proj.pack(side="right", padx=(2, 0))
+        add_tooltip(self.btn_open_proj, "فتح مشروع مونتاج سابق محفوظ على جهازك (Ctrl+O)", "Open a saved project file (Ctrl+O)", app=self)
 
         self.btn_save_proj = ttk.Button(
             hdr_right,
@@ -1799,6 +1812,7 @@ class SongCoverApp(
             style="Player.TButton",
         )
         self.btn_save_proj.pack(side="right", padx=(2, 0))
+        add_tooltip(self.btn_save_proj, "حفظ المشروع والتعديلات والتايم لاين الحالي (Ctrl+S)", "Save current project and timeline (Ctrl+S)", app=self)
 
         # License / Trial Status Indicator Button
         self.btn_license_trial = ttk.Button(
@@ -1808,6 +1822,7 @@ class SongCoverApp(
             style="Player.TButton",
         )
         self.btn_license_trial.pack(side="right", padx=(2, 6))
+        add_tooltip(self.btn_license_trial, "عرض حالة التفعيل ورخصة البرنامج وفترة التجربة", "View license and activation status", app=self)
 
         # Hidden backward-compatibility holders for existing variable bindings
         self.i18n_widgets["subtitle"] = ttk.Label(self)
@@ -1855,6 +1870,7 @@ class SongCoverApp(
         )
         self.btn_export_mode.place(in_=self.notebook, relx=1.0, rely=0.0, x=-6, y=2, anchor="ne")
         self.btn_export_mode.lift()
+        add_tooltip(self.btn_export_mode, "🚀 بدء معالجة وتصدير الفيديو النهائي بأعلى جودة", "🚀 Start final video export and processing", app=self)
 
         self.notebook.bind(
             "<Configure>",
@@ -2077,6 +2093,7 @@ class SongCoverApp(
 
         self.choose_cover_button = ttk.Button(custom_cover_row, command=self.choose_custom_cover, style="Player.TButton")
         self.choose_cover_button.grid(row=0, column=0, sticky="w")
+        add_tooltip(self.choose_cover_button, "اختيار صورة غلاف مخصصة من جهازك", "Choose a custom cover image", app=self)
         self.custom_cover_text_label = ttk.Label(custom_cover_row, textvariable=self.custom_cover_text_var, foreground="#555555")
         self.custom_cover_text_label.grid(row=0, column=1, padx=(8, 6), sticky="ew")
         self.cover_thumb_label = ttk.Label(custom_cover_row)
@@ -2085,6 +2102,7 @@ class SongCoverApp(
         audio_panel.rowconfigure(5, weight=1)
         self.run_button = ttk.Button(audio_panel, command=self.start_conversion, style="Action.TButton")
         self.run_button.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        add_tooltip(self.run_button, "بدء تحويل وضغط الملفات المحددة", "Start batch conversion", app=self)
 
         # Right Column: Video Conversion & Compression
         video_panel = ttk.LabelFrame(parent, padding=12)
@@ -2184,6 +2202,7 @@ class SongCoverApp(
             style="Player.TButton",
         )
         self.btn_q_reels.grid(row=0, column=0, padx=(0, 2))
+        add_tooltip(self.btn_q_reels, "ضبط أبعاد الكادر لنسبة 9:16 بالطول (Reels / Shorts / TikTok)", "9:16 Vertical Aspect Ratio (Reels/TikTok)", app=self)
 
         self.btn_q_169 = ttk.Button(
             viewer_topbar,
@@ -2192,6 +2211,7 @@ class SongCoverApp(
             style="Player.TButton",
         )
         self.btn_q_169.grid(row=0, column=1, padx=2)
+        add_tooltip(self.btn_q_169, "ضبط أبعاد الكادر لنسبة 16:9 بالعرض (YouTube / TV)", "16:9 Landscape Aspect Ratio (YouTube/TV)", app=self)
 
         self.btn_q_11 = ttk.Button(
             viewer_topbar,
@@ -2200,6 +2220,7 @@ class SongCoverApp(
             style="Player.TButton",
         )
         self.btn_q_11.grid(row=0, column=2, padx=2)
+        add_tooltip(self.btn_q_11, "ضبط أبعاد الكادر لنسبة 1:1 مربعة (Instagram Post)", "1:1 Square Aspect Ratio", app=self)
 
         self.btn_q_orig = ttk.Button(
             viewer_topbar,
@@ -2208,6 +2229,7 @@ class SongCoverApp(
             style="Player.TButton",
         )
         self.btn_q_orig.grid(row=0, column=3, padx=2)
+        add_tooltip(self.btn_q_orig, "العودة للأبعاد الأصلية للفيديو بدون اقتصاص", "Reset to original video aspect ratio", app=self)
 
         self.btn_safe_grid = ttk.Button(
             viewer_topbar,
@@ -2216,6 +2238,7 @@ class SongCoverApp(
             style="Player.TButton",
         )
         self.btn_safe_grid.grid(row=0, column=4, padx=(6, 2))
+        add_tooltip(self.btn_safe_grid, "إظهار أو إخفاء شبكة الكادر ومناطق الأمان (Safe Zones)", "Toggle Safe Framing Grid", app=self)
 
         self.btn_reset_cam = ttk.Button(
             viewer_topbar,
@@ -2224,6 +2247,7 @@ class SongCoverApp(
             style="Player.TButton",
         )
         self.btn_reset_cam.grid(row=0, column=5, padx=2)
+        add_tooltip(self.btn_reset_cam, "إعادة ضبط موضع وتكبير الكاميرا للوضع الطبيعي المركز", "Reset Camera Framing & Pan/Zoom", app=self)
 
         viewer_topbar.columnconfigure(6, weight=1)
 
@@ -2234,6 +2258,7 @@ class SongCoverApp(
             style="Player.TButton",
         )
         self.studio_toggle_btn.grid(row=0, column=8, sticky="e")
+        add_tooltip(self.studio_toggle_btn, "التبديل بين استوديو المونتاج المرئي ومعاينة VLC المباشرة", "Toggle Studio Canvas Preview / VLC", app=self)
 
         # Video Surface (VLC) + Interactive DaVinci Studio Canvas
         self.video_surface = tk.Frame(player_panel, bg="black")
@@ -2288,21 +2313,28 @@ class SongCoverApp(
 
         self.play_button = ttk.Button(media_controls, text="▶", command=self.toggle_play_pause, style="PrimaryPlayer.TButton", width=4)
         self.play_button.grid(row=0, column=0, sticky="w")
+        add_tooltip(self.play_button, "تشغيل / إيقاف المعاينة مؤقتاً (المسافة Space)", "Play / Pause (Space)", app=self)
         self.pause_button = ttk.Button(media_controls, command=self.pause_playback, style="Player.TButton", width=3)
         self.stop_button = ttk.Button(media_controls, command=self.stop_playback, style="Player.TButton", width=3)
         self.stop_button.grid(row=0, column=1, padx=(3, 0), sticky="w")
+        add_tooltip(self.stop_button, "إيقاف التشغيل والعودة لنقطة البداية", "Stop Playback", app=self)
         ttk.Separator(media_controls, orient="vertical").grid(row=0, column=2, padx=5, sticky="ns")
         self.previous_button = ttk.Button(media_controls, command=self.seek_to_start, style="Player.TButton", width=3)
         self.previous_button.grid(row=0, column=3, sticky="w")
+        add_tooltip(self.previous_button, "القفز إلى بداية الفيديو (Home)", "Seek to Start (Home)", app=self)
         self.back_button = ttk.Button(media_controls, command=lambda: self.seek_relative(-5), style="Player.TButton", width=4)
         self.back_button.grid(row=0, column=4, padx=(2, 0), sticky="w")
+        add_tooltip(self.back_button, "تقديم 5 ثوانٍ للخلف (السهم الأيسر ←)", "Seek 5s Backward (Left Arrow)", app=self)
         self.forward_button = ttk.Button(media_controls, command=lambda: self.seek_relative(5), style="Player.TButton", width=4)
         self.forward_button.grid(row=0, column=5, padx=(2, 0), sticky="w")
+        add_tooltip(self.forward_button, "تقديم 5 ثوانٍ للأمام (السهم الأيمن →)", "Seek 5s Forward (Right Arrow)", app=self)
         self.next_button = ttk.Button(media_controls, command=self.seek_to_end, style="Player.TButton", width=3)
         self.next_button.grid(row=0, column=6, padx=(2, 0), sticky="w")
+        add_tooltip(self.next_button, "القفز إلى نهاية الفيديو (End)", "Seek to End (End)", app=self)
         ttk.Separator(media_controls, orient="vertical").grid(row=0, column=7, padx=5, sticky="ns")
         self.expand_video_button = ttk.Button(media_controls, text="⛶ تكبير" if is_ar else "⛶ Full", command=self.toggle_video_size, style="Player.TButton", width=7)
         self.expand_video_button.grid(row=0, column=8, sticky="w")
+        add_tooltip(self.expand_video_button, "تكبير المعاينة لشاشة السينما الكاملة (F11)", "Cinema Fullscreen Preview (F11)", app=self)
         self.snapshot_button = ttk.Button(
             media_controls,
             text=self.text("snapshot_btn"),
@@ -2310,6 +2342,7 @@ class SongCoverApp(
             style="Player.TButton",
         )
         self.snapshot_button.grid(row=0, column=10, padx=(3, 0), sticky="w")
+        add_tooltip(self.snapshot_button, "التقاط صورة بجودة فائقة للإطار الحالي وحفظها (F12)", "Capture High-Res Frame Snapshot (F12)", app=self)
         ttk.Separator(media_controls, orient="vertical").grid(row=0, column=11, padx=5, sticky="ns")
         self.i18n_widgets["speed_label"] = ttk.Label(media_controls)
         self.i18n_widgets["speed_label"].grid(row=0, column=12, sticky="w")
@@ -2322,6 +2355,7 @@ class SongCoverApp(
         )
         self.speed_combo.grid(row=0, column=13, padx=(3, 0), sticky="w")
         self.speed_combo.bind("<<ComboboxSelected>>", self._speed_changed)
+        add_tooltip(self.speed_combo, "تغيير سرعة معاينة الفيديو", "Playback Speed", app=self)
         ttk.Separator(media_controls, orient="vertical").grid(row=0, column=14, padx=5, sticky="ns")
         self.i18n_widgets["volume_label"] = ttk.Label(media_controls)
         self.i18n_widgets["volume_label"].grid(row=0, column=15, sticky="e")
@@ -2334,6 +2368,7 @@ class SongCoverApp(
             command=self.apply_volume,
         )
         self.volume_scale.grid(row=0, column=17, padx=(4, 0), sticky="ew")
+        add_tooltip(self.volume_scale, "التحكم في مستوى صوت المعاينة", "Playback Volume", app=self)
 
         # ---------------- Right Column: Dynamic Context-Sensitive Inspector + Modular Export ----------------
         inspector_panel = ttk.Frame(top_workspace)
@@ -2356,6 +2391,7 @@ class SongCoverApp(
             style="Player.TButton",
         )
         self.btn_pal_txt.grid(row=0, column=0, sticky="ew", padx=(0, 2))
+        add_tooltip(self.btn_pal_txt, "إضافة نص متحرك أو عنوان جديد فوق الفيديو", "Add Text Overlay", app=self)
 
         self.btn_pal_ico = ttk.Button(
             add_palette,
@@ -2364,6 +2400,7 @@ class SongCoverApp(
             style="Player.TButton",
         )
         self.btn_pal_ico.grid(row=0, column=1, sticky="ew", padx=2)
+        add_tooltip(self.btn_pal_ico, "إضافة أيقونة أو ملصق تعبيري فوق الفيديو", "Add Icon / Sticker Overlay", app=self)
 
         self.btn_pal_img = ttk.Button(
             add_palette,
@@ -2372,6 +2409,7 @@ class SongCoverApp(
             style="Player.TButton",
         )
         self.btn_pal_img.grid(row=0, column=2, sticky="ew", padx=2)
+        add_tooltip(self.btn_pal_img, "إضافة صورة خارجية كطبقة فوق الفيديو", "Add Image Overlay", app=self)
 
         self.btn_pal_lgo = ttk.Button(
             add_palette,
@@ -2380,6 +2418,7 @@ class SongCoverApp(
             style="Player.TButton",
         )
         self.btn_pal_lgo.grid(row=0, column=3, sticky="ew", padx=2)
+        add_tooltip(self.btn_pal_lgo, "إضافة شعار (لوجو) أو علامة مائية على الفيديو", "Add Logo / Watermark", app=self)
 
         self.btn_pal_aud = ttk.Button(
             add_palette,
@@ -2388,6 +2427,7 @@ class SongCoverApp(
             style="Player.TButton",
         )
         self.btn_pal_aud.grid(row=0, column=4, sticky="ew", padx=(2, 0))
+        add_tooltip(self.btn_pal_aud, "إضافة ملف صوتي أو مؤثر موسيقي جديد للتايم لاين", "Add Audio Track", app=self)
 
         # Row 1: Tool Context Switcher Bar (clicking any tool shows ONLY its settings in the single slot below)
         ctx_bar = ttk.Frame(inspector_panel)
@@ -2403,6 +2443,7 @@ class SongCoverApp(
             style="PrimaryPlayer.TButton",
         )
         self.btn_ctx_video.grid(row=0, column=0, sticky="ew", padx=(0, 1))
+        add_tooltip(self.btn_ctx_video, "إعدادات أبعاد الفيديو والكادر والتكبير", "Video Framing & Transform Settings", app=self)
 
         self.btn_ctx_color = ttk.Button(
             ctx_bar,
@@ -2411,6 +2452,7 @@ class SongCoverApp(
             style="Player.TButton",
         )
         self.btn_ctx_color.grid(row=0, column=1, sticky="ew", padx=1)
+        add_tooltip(self.btn_ctx_color, "لوحة تصحيح الألوان وتدرج الفلاتر السينمائية", "Color Grading & Filters", app=self)
 
         self.btn_ctx_transition = ttk.Button(
             ctx_bar,
@@ -2419,6 +2461,7 @@ class SongCoverApp(
             style="Player.TButton",
         )
         self.btn_ctx_transition.grid(row=0, column=2, sticky="ew", padx=1)
+        add_tooltip(self.btn_ctx_transition, "مؤثرات الانتقال الحركي بين اللقطات والقصات", "Transitions Effects", app=self)
 
         self.btn_ctx_silence = ttk.Button(
             ctx_bar,
@@ -2427,6 +2470,7 @@ class SongCoverApp(
             style="Player.TButton",
         )
         self.btn_ctx_silence.grid(row=0, column=3, sticky="ew", padx=1)
+        add_tooltip(self.btn_ctx_silence, "الكشف التلقائي عن السكتات الصامتة وحذفها بضغطة زر", "Smart Silence Detection & Removal", app=self)
 
         self.btn_ctx_audio = ttk.Button(
             ctx_bar,
@@ -2435,6 +2479,7 @@ class SongCoverApp(
             style="Player.TButton",
         )
         self.btn_ctx_audio.grid(row=0, column=4, sticky="ew", padx=1)
+        add_tooltip(self.btn_ctx_audio, "هندسة الصوت ومعادلة الترددات وخفض الضوضاء ومسارات الصوت", "Audio Mastering & Tracks Manager", app=self)
 
         self.btn_ctx_subs = ttk.Button(
             ctx_bar,
@@ -2443,6 +2488,7 @@ class SongCoverApp(
             style="Player.TButton",
         )
         self.btn_ctx_subs.grid(row=0, column=5, sticky="ew", padx=(1, 0))
+        add_tooltip(self.btn_ctx_subs, "التفريغ الصوتي التلقائي بالذكاء الاصطناعي وإنشاء الترجمة والكتابة على الفيديو", "AI Transcription & Subtitles", app=self)
 
         # Row 2: Single Dynamic Context-Sensitive Inspector Host (Clean, static layout without scrolling)
         self.inspector_host_wrapper = ttk.Frame(inspector_panel)
@@ -3249,6 +3295,7 @@ class SongCoverApp(
             style="Player.TButton",
         )
         self.btn_toggle_orig_audio.grid(row=0, column=0, sticky="ew", pady=(1, 3))
+        add_tooltip(self.btn_toggle_orig_audio, "كتم أو تفعيل صوت الفيديو الأصلي بالكامل (مسار A1)", "Toggle original video audio track (A1) mute", app=self)
 
         self.btn_add_ext_audio = ttk.Button(
             aud_tracks_card,
@@ -3257,6 +3304,7 @@ class SongCoverApp(
             style="PrimaryPlayer.TButton",
         )
         self.btn_add_ext_audio.grid(row=1, column=0, sticky="ew", pady=(1, 3))
+        add_tooltip(self.btn_add_ext_audio, "إضافة ملف صوت أو مؤثر موسيقي خارجي في مسار A2", "Add external audio or music file to track A2", app=self)
 
         self.lbl_audio_tracks_status = ttk.Label(
             aud_tracks_card,
@@ -3322,6 +3370,7 @@ class SongCoverApp(
             style="PrimaryPlayer.TButton",
         )
         self.btn_studio_transcribe.grid(row=0, column=0, sticky="ew", padx=(0, 2))
+        add_tooltip(self.btn_studio_transcribe, "بدء التفريغ الصوتي الذكي وتحويل الكلام لنصوص وترجمة دقيقة", "Transcribe audio to subtitles using AI", app=self)
         self.btn_branding = ttk.Button(
             subs_btns,
             text=self.text("branding_btn"),
@@ -3329,6 +3378,7 @@ class SongCoverApp(
             style="Player.TButton",
         )
         self.btn_branding.grid(row=0, column=1, sticky="ew", padx=(2, 0))
+        add_tooltip(self.btn_branding, "فتح إعدادات العلامة المائية والشعار والنصوص المتحركة", "Open Video Branding & Watermark Dialog", app=self)
 
         # Quick Range Trim Card
         controls = ttk.LabelFrame(self.ctx_frame_subs, padding=(7, 4, 7, 5))
@@ -3342,6 +3392,7 @@ class SongCoverApp(
         self.trim_start_entry.grid(row=0, column=1, padx=(6, 4), sticky="ew", pady=1)
         self.mark_start_button = ttk.Button(controls, command=self.mark_trim_start, style="Player.TButton")
         self.mark_start_button.grid(row=0, column=2, sticky="e", pady=1)
+        add_tooltip(self.mark_start_button, "تحديد موضع بداية القص من موقع مؤشر التشغيل الحالي (I)", "Set Trim Start to Current Time (I)", app=self)
 
         self.i18n_widgets["trim_end_label"] = ttk.Label(controls)
         self.i18n_widgets["trim_end_label"].grid(row=1, column=0, sticky="w", pady=1)
@@ -3349,6 +3400,7 @@ class SongCoverApp(
         self.trim_end_entry.grid(row=1, column=1, padx=(6, 4), sticky="ew", pady=1)
         self.mark_end_button = ttk.Button(controls, command=self.mark_trim_end, style="Player.TButton")
         self.mark_end_button.grid(row=1, column=2, sticky="e", pady=1)
+        add_tooltip(self.mark_end_button, "تحديد موضع نهاية القص من موقع مؤشر التشغيل الحالي (O)", "Set Trim End to Current Time (O)", app=self)
 
         trim_act_row = ttk.Frame(controls)
         trim_act_row.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(3, 0))
@@ -3622,6 +3674,7 @@ class SongCoverApp(
 
         self.fetch_youtube_button = ttk.Button(youtube_panel, command=self.start_fetch_youtube_formats, style="Action.TButton")
         self.fetch_youtube_button.grid(row=0, column=2, sticky="w")
+        add_tooltip(self.fetch_youtube_button, "فحص الرابط واستخراج الجودات والصيغ المتاحة للتحميل", "Fetch available video formats & resolutions", app=self)
 
         self.i18n_widgets["youtube_quality_label"] = ttk.Label(youtube_panel)
         self.i18n_widgets["youtube_quality_label"].grid(row=1, column=0, sticky="w", pady=(12, 0))
@@ -3639,6 +3692,7 @@ class SongCoverApp(
             style="Action.TButton",
         )
         self.download_youtube_button.grid(row=1, column=2, sticky="w", pady=(12, 0))
+        add_tooltip(self.download_youtube_button, "بدء تنزيل الفيديو بأعلى جودة وحفظه في جهازك", "Download video from YouTube", app=self)
 
         dest_row = ttk.Frame(youtube_panel)
         dest_row.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(16, 0))
@@ -3646,6 +3700,7 @@ class SongCoverApp(
 
         self.choose_youtube_output_button = ttk.Button(dest_row, command=self.choose_youtube_output_folder, style="Player.TButton")
         self.choose_youtube_output_button.grid(row=0, column=0, sticky="w")
+        add_tooltip(self.choose_youtube_output_button, "تحديد المجلد الذي سيتم حفظ الفيديو المحمل بداخله", "Choose destination folder for downloaded video", app=self)
         self.youtube_detail_label = ttk.Label(dest_row, textvariable=self.youtube_detail_var, foreground="#0066cc", font=("Segoe UI", 9))
         self.youtube_detail_label.grid(
             row=0, column=1, padx=(10, 0), sticky="w"
@@ -6380,6 +6435,8 @@ class SongCoverApp(
         self._refresh_master_export_summary()
         self._save_settings()
         self.trigger_step_autosave()
+        if hasattr(self, "_apply_active_clip_playback_fx"):
+            self._apply_active_clip_playback_fx()
 
         _c_idx, cur_clip, src_sec = self.nle_project.timeline_to_source(self.nle_playhead_sec)
         if cur_clip is None:

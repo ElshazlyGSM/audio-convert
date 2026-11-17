@@ -105,9 +105,10 @@ class PlaybackSyncMixin:
             pass
 
         a1_on = self.nle_project.track_enabled.get("A1", True) if hasattr(self, "nle_project") else True
-        is_muted = (not a1_on) or bool(clip and clip.get("muted", False))
+        clip_muted = bool(clip and clip.get("muted", False))
         base_vol = float(self.volume_var.get())
         clip_vol = float(clip.get("volume", 1.0)) if clip else 1.0
+        is_muted = (not a1_on) or clip_muted or (clip_vol <= 0.01)
 
         gain_db = 0.0
         try:
@@ -142,10 +143,18 @@ class PlaybackSyncMixin:
         except Exception:
             pass
 
-        # VLC Volume with acoustic gain curve
+        # VLC Volume with acoustic gain curve & definitive hardware mute
         if is_muted:
             eff_vol = 0
+            try:
+                self.media_player.audio_set_mute(True)
+            except Exception:
+                pass
         else:
+            try:
+                self.media_player.audio_set_mute(False)
+            except Exception:
+                pass
             gain_mult = min(2.5, max(0.1, 10.0 ** (gain_db / 20.0))) if abs(gain_db) > 0.1 else 1.0
             scale_factor = gain_mult if gain_mult < 1.0 else (1.0 + (gain_mult - 1.0) * 0.4)
             eff_vol = int(max(0, min(200, round(base_vol * clip_vol * scale_factor))))
@@ -193,6 +202,8 @@ class PlaybackSyncMixin:
                     self.media_player.set_time(int(max(0.0, src_sec) * 1000))
                     self.media_player.play()
                     self._apply_active_clip_playback_fx(clip)
+                    self.after(50, lambda c=clip: self._apply_active_clip_playback_fx(c))
+                    self.after(160, lambda c=clip: self._apply_active_clip_playback_fx(c))
                 self.apply_video_aspect_ratio()
                 self.apply_video_color_adjustments()
                 self._attach_vlc_subtitles_if_available()
@@ -242,6 +253,8 @@ class PlaybackSyncMixin:
             self.media_player.play()
             self._seek_loaded_player(src_sec * 1000)
             self._apply_active_clip_playback_fx(clip)
+            self.after(50, lambda c=clip: self._apply_active_clip_playback_fx(c))
+            self.after(160, lambda c=clip: self._apply_active_clip_playback_fx(c))
 
         self.play_started_at = time.monotonic()
         self.apply_video_aspect_ratio()

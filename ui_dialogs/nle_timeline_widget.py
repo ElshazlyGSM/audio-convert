@@ -17,6 +17,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from video_studio.arabic_support import prepare_arabic_for_rendering
 from video_studio.icons_library import ICON_PRESETS
 from video_studio.transitions import DEFAULT_TRANSITIONS_CONFIG, get_transition_info
+from video_studio.tooltip import add_tooltip
 
 
 class DaVinciTimelinePanel(ttk.Frame):
@@ -58,6 +59,7 @@ class DaVinciTimelinePanel(ttk.Frame):
 
         self.playhead_sec: float = 0.0
         self.tool_mode: str = "select"            # "select" or "blade"
+        self.linked_selection: bool = True       # When True: V1 video and A1 audio are linked together; when False: independent
         self.zoom_factor: float = 1.0             # 1.0 = fit full timeline, up to _max_zoom() (~300 px/sec)
         self.scroll_px: float = 0.0
 
@@ -173,7 +175,20 @@ class DaVinciTimelinePanel(ttk.Frame):
             font=("Segoe UI", 8, "bold"),
             cursor="hand2",
         )
-        self.btn_tool_blade.pack(side="left", padx=(0, 4))
+        self.btn_tool_blade.pack(side="left", padx=(0, 2))
+
+        self.btn_link_toggle = tk.Button(
+            bar,
+            command=self.toggle_linked_selection,
+            relief="flat",
+            bd=0,
+            padx=7,
+            pady=2,
+            font=("Segoe UI", 8, "bold"),
+            cursor="hand2",
+        )
+        self.btn_link_toggle.pack(side="left", padx=(0, 4))
+        self._update_link_button()
 
         tk.Frame(bar, bg="#30363d", width=1, height=18).pack(side="left", padx=3)
 
@@ -258,6 +273,31 @@ class DaVinciTimelinePanel(ttk.Frame):
         )
         self.btn_zoom_cut.pack(side="right", padx=2)
 
+        # Tooltips for all toolbar buttons
+        add_tooltip(self.btn_tool_select, "أداة التحديد والتحريك (مفتاح A)", "Select Tool (Key A)")
+        add_tooltip(self.btn_tool_blade, "أداة شفرة المقص لتقطيع المقاطع بالفأرة (مفتاح B)", "Blade Tool (Key B)")
+        add_tooltip(self.btn_link_toggle, "ربط/فصل مسارات الفيديو والصوت (تحديد مدمج أو تحكم مستقل لكل مسار)", "Link/Unlink Video & Audio Selection")
+        add_tooltip(self.btn_split_now, "قص وتقسيم عند موضع المؤشر الحالي (Ctrl+B أو S)", "Split at Playhead (Ctrl+B)")
+        add_tooltip(self.btn_delete_sel, "حذف المقطع أو العنصر المحدد (Delete)", "Delete Selected (Delete)")
+        add_tooltip(self.btn_dup_sel, "تكرار العنصر المحدد", "Duplicate Selected")
+        add_tooltip(self.btn_copy, "نسخ العنصر المحدد (Ctrl+C)", "Copy Selected (Ctrl+C)")
+        add_tooltip(self.btn_paste, "لصق عند موضع المؤشر (Ctrl+V)", "Paste at Playhead (Ctrl+V)")
+        add_tooltip(self.btn_close_gaps, "ضم وإغلاق جميع الفراغات بين المقاطع", "Close All Timeline Gaps")
+        add_tooltip(self.btn_split_silence, "كشف وتقسيم السكتات في الصوت تلقائياً", "Auto Silence Detection & Split")
+        add_tooltip(self.btn_undo, "تراجع عن آخر خطوة (Ctrl+Z)", "Undo (Ctrl+Z)")
+        add_tooltip(self.btn_redo, "إعادة الخطوة السابقة (Ctrl+Y)", "Redo (Ctrl+Y)")
+        add_tooltip(self.btn_shortcuts, "دليل اختصارات الكيبورد والتحكم", "Keyboard Shortcuts Guide")
+        add_tooltip(self.btn_add_track, "إضافة مسار إضافي جديد", "Add Timeline Track")
+        add_tooltip(self.btn_compact_tracks, "تبديل وضع العرض المضغوط / الموسع للطبقات", "Toggle Compact / Expanded Tracks")
+        add_tooltip(self.chk_ripple, "تفعيل/تعطيل الضم التلقائي للمقاطع عند الحذف (Ripple)", "Toggle Ripple Delete")
+        add_tooltip(self.btn_add_txt, "إضافة نص جديد عند المؤشر", "Add Text at Playhead")
+        add_tooltip(self.btn_add_ico, "إضافة أيقونة أو شارة عند المؤشر", "Add Icon at Playhead")
+        add_tooltip(self.btn_add_img, "إضافة صورة خارجية عند المؤشر", "Add Image at Playhead")
+        add_tooltip(self.btn_add_lgo, "إضافة أو تغيير اللوجو للتايم لاين", "Add Logo at Playhead")
+        add_tooltip(self.btn_add_aud, "إضافة ملف صوت جديد إلى مسار A2", "Add Audio File to Track A2")
+        add_tooltip(self.btn_zoom_fit, "ملاءمة كامل التايم لاين لعرضه بالكامل داخل الشاشة", "Fit Entire Timeline to View")
+        add_tooltip(self.btn_zoom_cut, "تكبير زوم فائق على موضع المؤشر للتدقيق", "Fine Zoom to Playhead / Cut")
+
         self._mk_small_zoom_btn(bar, "➕", lambda: self.step_zoom(1.45)).pack(side="right", padx=1)
         self.zoom_scale = ttk.Scale(
             bar,
@@ -338,10 +378,43 @@ class DaVinciTimelinePanel(ttk.Frame):
             cursor="hand2",
         )
 
+    def toggle_linked_selection(self):
+        self.linked_selection = not getattr(self, "linked_selection", True)
+        self._update_link_button()
+        ar = self._is_ar()
+        if self.linked_selection:
+            self.show_hud_toast("🔗 تم تفعيل ربط مسارات الفيديو والصوت (التحكم مدمج)" if ar else "🔗 Linked Selection ON (Video & Audio linked)")
+        else:
+            self.show_hud_toast("⛓️ تم فصل ارتباط الفيديو عن الصوت (تحكم مستقل لكل مسار)" if ar else "⛓️ Linked Selection OFF (Independent Video & Audio control)")
+        self.redraw()
+
+    def _update_link_button(self):
+        if not hasattr(self, "btn_link_toggle"):
+            return
+        ar = self._is_ar()
+        is_linked = getattr(self, "linked_selection", True)
+        if is_linked:
+            self.btn_link_toggle.configure(
+                text="🔗 " + ("مرتبط" if ar else "Linked"),
+                bg="#1f3b2d",
+                fg="#7ee787",
+                activebackground="#294e3c",
+                activeforeground="#ffffff",
+            )
+        else:
+            self.btn_link_toggle.configure(
+                text="⛓️ " + ("مفصول" if ar else "Unlinked"),
+                bg="#482222",
+                fg="#ff7b72",
+                activebackground="#602d2d",
+                activeforeground="#ffffff",
+            )
+
     def apply_language(self):
         ar = self._is_ar()
         self.btn_tool_select.configure(text="🖱️ تحديد (A)" if ar else "🖱️ Select (A)")
         self.btn_tool_blade.configure(text="✂️ مقص (B)" if ar else "✂️ Blade (B)")
+        self._update_link_button()
         self.btn_split_now.configure(text="✂️ قص (S)" if ar else "✂️ Split (S)")
         self.btn_delete_sel.configure(text="🗑️ حذف" if ar else "🗑️ Delete")
         self.btn_dup_sel.configure(text="📋 تكرار" if ar else "📋 Dup")
@@ -910,8 +983,13 @@ class DaVinciTimelinePanel(ttk.Frame):
         by_track: Dict[str, List[int]] = {}
         clip_indices: List[int] = []
         for kind, idx in targets:
-            if kind == "clip":
+            if kind in ("clip", "V1_clip"):
                 clip_indices.append(idx)
+            elif kind == "A1_clip":
+                if 0 <= idx < len(self.nle.clips):
+                    self.nle.clips[idx]["muted"] = True
+                    self.nle.clips[idx]["volume"] = 0.0
+                    self.show_hud_toast("🔇 تم كتم/حذف صوت المقطع المحدد" if ar else "🔇 Muted/deleted audio for selected clip")
             else:
                 by_track.setdefault(kind, []).append(idx)
 
@@ -1636,15 +1714,18 @@ class DaVinciTimelinePanel(ttk.Frame):
 
             dx0 = max(self.HEADER_W, x0)
             dx1 = min(cw, x1)
-            is_sel = (self.selected_ref == ("clip", idx)) or (idx in getattr(self, "selected_clip_indices", set())) or (("clip", idx) in getattr(self, "selected_items", set()))
+            is_v_sel = (self.selected_ref in (("clip", idx), ("V1_clip", idx))) or (idx in getattr(self, "selected_clip_indices", set())) or (("clip", idx) in getattr(self, "selected_items", set())) or (("V1_clip", idx) in getattr(self, "selected_items", set()))
+            is_a_sel = (self.selected_ref in (("clip", idx), ("A1_clip", idx))) or (idx in getattr(self, "selected_clip_indices", set())) or (("clip", idx) in getattr(self, "selected_items", set())) or (("A1_clip", idx) in getattr(self, "selected_items", set()))
             is_sil_clip = str(clip.get("name", "")).startswith("🔇")
             is_compound = bool(clip.get("sub_clips"))
-            out_c = "#ffd700" if is_sel else "#11141a"
-            out_w = 2 if is_sel else 1
+            v_out_c = "#ffd700" if is_v_sel else "#11141a"
+            v_out_w = 2 if is_v_sel else 1
+            a_out_c = "#ffd700" if is_a_sel else "#11141a"
+            a_out_w = 2 if is_a_sel else 1
 
             v_fill = "#3a2528" if is_sil_clip else ("#1e3d4f" if is_compound else "#28486e")
             v_hdr = "#543237" if is_sil_clip else ("#2a5a73" if is_compound else "#366194")
-            c.create_rectangle(dx0, v1_y0 + 2, dx1 - 1, v1_y1 - 2, fill=v_fill, outline=out_c, width=out_w)
+            c.create_rectangle(dx0, v1_y0 + 2, dx1 - 1, v1_y1 - 2, fill=v_fill, outline=v_out_c, width=v_out_w)
 
             badges = []
             if is_compound:
@@ -1675,14 +1756,14 @@ class DaVinciTimelinePanel(ttk.Frame):
                         font=("Consolas", 7),
                     )
 
-            if is_sel:
+            if is_v_sel:
                 c.create_rectangle(dx0, v1_y0 + 2, min(dx1, dx0 + 4), v1_y1 - 2, fill="#ffffff", outline="")
                 c.create_rectangle(max(dx0, dx1 - 5), v1_y0 + 2, dx1 - 1, v1_y1 - 2, fill="#ffffff", outline="")
 
             # --- A1 Green Audio Clip Block + High-Density Waveform ---
             clip_muted = (not a1_track_on) or bool(clip.get("muted", False)) or float(clip.get("volume", 1.0)) <= 0.01
             a_fill = "#1d2922" if clip_muted else "#2c643b"
-            c.create_rectangle(dx0, a1_y0 + 2, dx1 - 1, a1_y1 - 2, fill=a_fill, outline=out_c, width=out_w)
+            c.create_rectangle(dx0, a1_y0 + 2, dx1 - 1, a1_y1 - 2, fill=a_fill, outline=a_out_c, width=a_out_w)
 
             wf_mid = (a1_y0 + a1_y1) / 2.0
             wf_half = max(3.0, (a1_y1 - a1_y0) / 2.0 - 5.0)
@@ -1743,6 +1824,10 @@ class DaVinciTimelinePanel(ttk.Frame):
                 # Horizontal baseline drawn across the entire clip length
                 c.create_line(dx0 + 1, wf_mid, dx1 - 1, wf_mid, fill=center_line_col, width=1)
 
+            if is_a_sel:
+                c.create_rectangle(dx0, a1_y0 + 2, min(dx1, dx0 + 4), a1_y1 - 2, fill="#ffffff", outline="")
+                c.create_rectangle(max(dx0, dx1 - 5), a1_y0 + 2, dx1 - 1, a1_y1 - 2, fill="#ffffff", outline="")
+
             if avail_w > 36:
                 a_lbl = "🔇 صامت" if (clip_muted and ar) else ("🔇 Muted" if clip_muted else f"{clip.get('name', 'Audio')}")
                 # Subtle dark text shadow for high contrast readability against waveform
@@ -1752,7 +1837,11 @@ class DaVinciTimelinePanel(ttk.Frame):
             if idx > 0 and self.HEADER_W <= x0 <= cw:
                 c.create_line(x0, v1_y0, x0, a1_y1, fill="#090b0f", width=2)
 
-            self._item_hit_boxes.append(("clip", idx, x0, v1_y0 + 2, x1, a1_y1 - 2))
+            if getattr(self, "linked_selection", True):
+                self._item_hit_boxes.append(("clip", idx, x0, v1_y0 + 2, x1, a1_y1 - 2))
+            else:
+                self._item_hit_boxes.append(("V1_clip", idx, x0, v1_y0 + 2, x1, v1_y1 - 2))
+                self._item_hit_boxes.append(("A1_clip", idx, x0, a1_y0 + 2, x1, a1_y1 - 2))
 
             # 4c. Draw transition indicator badge and register cut hit boxes
             if idx < len(self.nle.clips) - 1:
@@ -1844,16 +1933,29 @@ class DaVinciTimelinePanel(ttk.Frame):
             c.create_rectangle(0, hy + 1, 4, hy + th - 1, fill=col_body if en else "#30363d", outline="")
             c.create_line(0, hy + th, self.HEADER_W, hy + th, fill="#282f3c", width=1)
 
-            # Eye / Speaker toggle box (x: 6..23)
-            toggle_icon = ("🔊" if en else "🔇") if (tkey in ("A1", "A2") or tkey.startswith("AUD")) else ("👁" if en else "🚫")
-            bh = min(18, max(12, th - 4))
-            c.create_rectangle(6, hy + (th // 2) - bh // 2, 23, hy + (th // 2) + bh // 2, fill="#242b38", outline="#384152")
-            c.create_text(14, hy + th // 2, text=toggle_icon, fill="#e6edf3" if en else "#6e7681", font=("Segoe UI", 7 if th < 24 else 8))
+            # Eye / Speaker toggle box (x: 6..34) - Much larger, vibrant, and ultra-visible!
+            is_audio_t = (tkey in ("A1", "A2") or tkey.startswith("AUD"))
+            toggle_icon = ("🔊" if en else "🔇") if is_audio_t else ("👁" if en else "🚫")
+            bh = min(22, max(14, th - 4))
+            box_x0, box_x1 = 6, 34
+            box_y0, box_y1 = hy + (th // 2) - bh // 2, hy + (th // 2) + bh // 2
+            
+            if is_audio_t:
+                box_bg = "#153a22" if en else "#5c1d1d"
+                box_border = "#2ea043" if en else "#f85149"
+                icon_fg = "#3fb950" if en else "#ffffff"
+            else:
+                box_bg = "#1c2838" if en else "#441c1c"
+                box_border = "#388bfd" if en else "#da3633"
+                icon_fg = "#58a6ff" if en else "#ff7b72"
+
+            c.create_rectangle(box_x0, box_y0, box_x1, box_y1, fill=box_bg, outline=box_border, width=1)
+            c.create_text((box_x0 + box_x1) // 2, hy + th // 2, text=toggle_icon, fill=icon_fg, font=("Segoe UI Emoji", 9 if th < 26 else 10, "bold"))
 
             # Track title
             t_label = lbl_ar if ar else lbl_en
             f_sz = 7 if th < 24 else 8
-            c.create_text(27, hy + th // 2, text=t_label, anchor="w", fill="#e6edf3" if en else "#6e7681", font=("Segoe UI", f_sz, "bold"))
+            c.create_text(38, hy + th // 2, text=t_label, anchor="w", fill="#e6edf3" if en else "#8b949e", font=("Segoe UI", f_sz, "bold"))
 
             # Lock / Unlock toggle box (x: HEADER_W - 44 .. HEADER_W - 24)
             is_locked = bool(hasattr(self.nle, "is_track_locked") and self.nle.is_track_locked(tkey))
@@ -1918,14 +2020,18 @@ class DaVinciTimelinePanel(ttk.Frame):
                 return (kind, idx), "body"
 
         # 2. Video & Audio Clips (Track V1 / A1)
-        clip_boxes = [box for box in self._item_hit_boxes if box[0] == "clip"]
+        clip_boxes = [box for box in self._item_hit_boxes if box[0] in ("clip", "V1_clip", "A1_clip")]
         if not clip_boxes:
             return None, "none"
 
-        v_min = min(b[3] for b in clip_boxes)
-        v_max = max(b[5] for b in clip_boxes)
-        if not (v_min - 4 <= my <= v_max + 4):
-            return None, "none"
+        matching_y = [box for box in clip_boxes if (box[3] - 4 <= my <= box[5] + 4)]
+        if matching_y:
+            clip_boxes = matching_y
+        else:
+            v_min = min(b[3] for b in clip_boxes)
+            v_max = max(b[5] for b in clip_boxes)
+            if not (v_min - 4 <= my <= v_max + 4):
+                return None, "none"
 
         clip_boxes.sort(key=lambda b: b[1])
         num_clips = len(clip_boxes)
@@ -1936,38 +2042,41 @@ class DaVinciTimelinePanel(ttk.Frame):
             # Check RIGHT edge of clip idx (at x1)
             if abs(mx - x1) <= EDGE_TOL:
                 if i < num_clips - 1:
+                    next_k = clip_boxes[i + 1][0]
+                    next_idx = clip_boxes[i + 1][1]
                     next_x0 = clip_boxes[i + 1][2]
                     if abs(next_x0 - x1) <= 3:
                         # Adjacent cut seam between clip i and clip i+1
-                        if self.selected_ref == ("clip", idx):
-                            return ("clip", idx), "right"
-                        elif self.selected_ref == ("clip", clip_boxes[i + 1][1]):
-                            return ("clip", clip_boxes[i + 1][1]), "left"
+                        if self.selected_ref == (_k, idx):
+                            return (_k, idx), "right"
+                        elif self.selected_ref == (next_k, next_idx):
+                            return (next_k, next_idx), "left"
                         elif mx <= x1:
-                            return ("clip", idx), "right"
+                            return (_k, idx), "right"
                         else:
-                            return ("clip", clip_boxes[i + 1][1]), "left"
-                return ("clip", idx), "right"
+                            return (next_k, next_idx), "left"
+                return (_k, idx), "right"
 
             # Check LEFT edge of clip idx (at x0)
             if abs(mx - x0) <= EDGE_TOL:
                 if i == 0 or abs(clip_boxes[i - 1][4] - x0) > 3:
-                    return ("clip", idx), "left"
+                    return (_k, idx), "left"
                 else:
+                    prev_k = clip_boxes[i - 1][0]
                     prev_idx = clip_boxes[i - 1][1]
-                    if self.selected_ref == ("clip", idx):
-                        return ("clip", idx), "left"
-                    elif self.selected_ref == ("clip", prev_idx):
-                        return ("clip", prev_idx), "right"
+                    if self.selected_ref == (_k, idx):
+                        return (_k, idx), "left"
+                    elif self.selected_ref == (prev_k, prev_idx):
+                        return (prev_k, prev_idx), "right"
                     elif mx >= x0:
-                        return ("clip", idx), "left"
+                        return (_k, idx), "left"
                     else:
-                        return ("clip", prev_idx), "right"
+                        return (prev_k, prev_idx), "right"
 
         # Step 2b: If no edge matched, check which clip BODY contains mx
         for _k, idx, x0, _y0, x1, _y1 in clip_boxes:
             if x0 <= mx <= x1:
-                return ("clip", idx), "body"
+                return (_k, idx), "body"
 
         return None, "none"
 
@@ -2055,6 +2164,11 @@ class DaVinciTimelinePanel(ttk.Frame):
         self.redraw()
         ar = self._is_ar()
         is_on = self.nle.track_enabled.get(tkey, True)
+        app = self._get_app()
+        if app and hasattr(app, "_apply_active_clip_playback_fx"):
+            app._apply_active_clip_playback_fx()
+            if hasattr(app, "_refresh_audio_inspector_status"):
+                app._refresh_audio_inspector_status()
         if tkey == "A1":
             self.show_hud_toast("🔊 تم تفعيل صوت الفيديو الأصلي" if is_on else "🔇 تم كتم صوت الفيديو الأصلي بالكامل" if ar else ("🔊 Original video audio enabled" if is_on else "🔇 Original video audio muted"))
         elif tkey == "A2" or tkey.startswith("AUD"):
@@ -2594,9 +2708,14 @@ class DaVinciTimelinePanel(ttk.Frame):
                 label="📋 " + ("تكرار المحدد" if ar else "Duplicate Selected"),
                 command=self.duplicate_selected,
             )
-            if self.selected_ref[0] == "clip":
+            if self.selected_ref and self.selected_ref[0] in ("clip", "V1_clip", "A1_clip"):
                 c_idx = self.selected_ref[1]
                 if 0 <= c_idx < len(self.nle.clips):
+                    is_linked = getattr(self, "linked_selection", True)
+                    menu.add_command(
+                        label="⛓️ " + ("فصل مسار الفيديو عن الصوت" if ar else "Unlink Video & Audio") if is_linked else "🔗 " + ("ربط مسار الفيديو بالصوت" if ar else "Link Video & Audio"),
+                        command=self.toggle_linked_selection,
+                    )
                     is_m = self.nle.clips[c_idx].get("muted", False)
                     m_lbl = ("🔊 تشغيل صوت هذا المقطع" if is_m else "🔇 كتم صوت هذا المقطع") if ar else ("🔊 Unmute Clip" if is_m else "🔇 Mute Clip")
                     menu.add_command(label=m_lbl, command=lambda: self._toggle_clip_mute(c_idx))
