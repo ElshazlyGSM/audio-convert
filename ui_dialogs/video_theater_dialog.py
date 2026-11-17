@@ -121,15 +121,20 @@ class VideoTheaterDialog(tk.Toplevel):
                 self.app.apply_video_aspect_ratio()
                 self.app.apply_video_color_adjustments()
                 self.app.media_player.play()
-                import time
-                time.sleep(0.04)
-                if cur_ms >= 0:
-                    self.app.media_player.set_time(cur_ms)
-                if not was_playing:
-                    self.app.media_player.pause()
-                else:
-                    if hasattr(self.app, "_schedule_playback_tick"):
-                        self.app._schedule_playback_tick()
+
+                def _restore_theater_time():
+                    try:
+                        if cur_ms >= 0 and self.app.media_player:
+                            self.app.media_player.set_time(cur_ms)
+                        if not was_playing:
+                            if self.app.media_player:
+                                self.app.media_player.pause()
+                        else:
+                            if hasattr(self.app, "_schedule_playback_tick"):
+                                self.app._schedule_playback_tick()
+                    except Exception:
+                        pass
+                self.after(40, _restore_theater_time)
             except Exception:
                 pass
 
@@ -782,15 +787,21 @@ class VideoTheaterDialog(tk.Toplevel):
                 self.app.apply_video_aspect_ratio()
                 self.app.apply_video_color_adjustments()
                 self.app.media_player.play()
-                import time
-                time.sleep(0.04)
-                if cur_ms >= 0:
-                    self.app.media_player.set_time(cur_ms)
-                if not was_playing:
-                    self.app.media_player.pause()
-                else:
-                    if hasattr(self.app, "_schedule_playback_tick"):
-                        self.app._schedule_playback_tick()
+
+                def _restore_main_time():
+                    try:
+                        if cur_ms >= 0 and self.app.media_player:
+                            self.app.media_player.set_time(cur_ms)
+                        if not was_playing:
+                            if self.app.media_player:
+                                self.app.media_player.pause()
+                        else:
+                            if hasattr(self.app, "_schedule_playback_tick"):
+                                self.app._schedule_playback_tick()
+                    except Exception:
+                        pass
+                if hasattr(self.app, "after"):
+                    self.app.after(40, _restore_main_time)
             except Exception:
                 pass
         else:

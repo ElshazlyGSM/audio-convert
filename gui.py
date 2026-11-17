@@ -1167,7 +1167,6 @@ class SongCoverApp(
         self._player_canvas_video_box = (0, 0, 100, 100)
 
         self._build_ui()
-        self._bind_studio_shortcuts()
         self.youtube_url_var.trace_add("write", self._youtube_url_changed)
         self._apply_language()
         self._refresh_youtube_details()
@@ -1178,12 +1177,9 @@ class SongCoverApp(
         self.after(450, self._check_and_enforce_license)
         self.after(3500, self._startup_update_check)
 
-        # Ensure window is brought to foreground upon launch
+        # Ensure window is brought to foreground upon launch without aggressive focus stealing
         try:
             self.lift()
-            self.attributes("-topmost", True)
-            self.after(500, lambda: self.attributes("-topmost", False))
-            self.focus_force()
         except Exception:
             pass
 
@@ -1195,7 +1191,21 @@ class SongCoverApp(
             if vlc is None:
                 return
             if self.vlc_instance is None:
-                self.vlc_instance = vlc.Instance("--no-video-title-show", "--no-plugins-cache", "--quiet", "--no-stats")
+                self.vlc_instance = vlc.Instance(
+                    "--no-video-title-show",
+                    "--no-plugins-cache",
+                    "--quiet",
+                    "--no-stats",
+                    "--no-mouse-events",
+                    "--no-keyboard-events",
+                    "--avcodec-hw=any",
+                    "--avcodec-threads=0",
+                    "--file-caching=1500",
+                    "--network-caching=1500",
+                    "--disc-caching=1500",
+                    "--drop-late-frames",
+                    "--skip-frames",
+                )
             if self.media_player is None and self.vlc_instance:
                 self.media_player = self.vlc_instance.media_player_new()
         except Exception:
@@ -2186,7 +2196,7 @@ class SongCoverApp(
         # Video Surface (VLC) + Interactive DaVinci Studio Canvas
         self.video_surface = tk.Frame(player_panel, bg="black")
         self.video_surface.grid(row=1, column=0, sticky="nsew")
-        self.video_surface.bind("<Double-Button-1>", lambda _e: self.toggle_video_size())
+        self.video_surface.bind("<Double-Button-1>", lambda _e: None)
         self.video_surface.grid_remove()
 
         self.player_studio_canvas = tk.Canvas(player_panel, bg="#090c12", highlightthickness=0)
@@ -7655,7 +7665,8 @@ class SongCoverApp(
     # -------------------------------------------------------------------------
     def _init_app_window_mode(self):
         try:
-            self.state("zoomed")
+            if self.wm_state() != "iconic":
+                self.state("zoomed")
         except Exception:
             pass
 
@@ -8504,10 +8515,6 @@ class SongCoverApp(
             elif k == "o":
                 if self._single_media_file_selected():
                     self.mark_trim_end()
-                    return "break"
-            elif k == "f":
-                if self._single_media_file_selected():
-                    self.toggle_video_size()
                     return "break"
 
         self.bind("<KeyPress>", _on_key)

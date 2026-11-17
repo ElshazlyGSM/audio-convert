@@ -1249,7 +1249,11 @@ class StudioCanvasMixin:
                         self._render_player_studio_canvas()
                         self._update_inspector_properties()
                 return
-        self.toggle_video_size()
+        # Safely deselect active item and refresh properties without triggering fullscreen
+        self.player_canvas_selected = None
+        self._sync_transform_sliders_from_state()
+        self._update_inspector_properties()
+        self._render_player_studio_canvas()
 
     def _show_player_canvas_context_menu(self, event):
         menu = tk.Menu(self, tearoff=0)
