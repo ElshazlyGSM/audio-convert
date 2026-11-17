@@ -62,7 +62,9 @@ class VideoTheaterDialog(tk.Toplevel):
         self.canvas = tk.Canvas(self, bg="#000000", highlightthickness=0, cursor="arrow")
 
         # Bind Key and Mouse Events
+        self.protocol("WM_DELETE_WINDOW", self.close)
         self.bind("<Escape>", lambda _e: self.close())
+        self.bind("<F11>", lambda _e: self.close())
         self.bind("<space>", lambda _e: self._toggle_play())
         self.bind("<Left>", lambda _e: self._seek_relative(-5))
         self.bind("<Right>", lambda _e: self._seek_relative(5))
@@ -81,6 +83,9 @@ class VideoTheaterDialog(tk.Toplevel):
         self.bar.bind("<Motion>", self._on_user_activity)
 
         self.canvas.bind("<Configure>", self._on_canvas_configure)
+
+        self._is_closing = False
+        self._auto_hide_timer = None
 
         # Notify app
         self.app._theater_dialog = self
@@ -356,25 +361,38 @@ class VideoTheaterDialog(tk.Toplevel):
             self.configure(cursor="arrow")
 
     def _schedule_auto_hide_check(self):
-        if not self.winfo_exists():
+        if getattr(self, "_is_closing", False):
+            return
+        try:
+            if not self.winfo_exists():
+                return
+        except Exception:
             return
         now = time.monotonic()
-        if (
-            self.app._is_playing()
-            and not self._is_scrubbing
-            and now - self._last_mouse_move >= 2.5
-            and hasattr(self, "bar")
-            and self.bar.winfo_ismapped()
-        ):
-            self.bar.pack_forget()
-            self.configure(cursor="none")
-        self.after(300, self._schedule_auto_hide_check)
+        try:
+            if (
+                self.app._is_playing()
+                and not self._is_scrubbing
+                and now - self._last_mouse_move >= 2.5
+                and hasattr(self, "bar")
+                and self.bar.winfo_ismapped()
+            ):
+                self.bar.pack_forget()
+                self.configure(cursor="none")
+        except Exception:
+            pass
+        if not getattr(self, "_is_closing", False):
+            try:
+                self._auto_hide_timer = self.after(300, self._schedule_auto_hide_check)
+            except Exception:
+                pass
 
     # -------------------------------------------------------------------------
     # Canvas Geometry & Drawing
     # -------------------------------------------------------------------------
     def _on_canvas_configure(self, _event=None):
-        self.refresh_preview()
+        if not getattr(self, "_is_closing", False):
+            self.refresh_preview()
 
     def _current_timeline_seconds(self) -> float:
         return float(getattr(self.app, "nle_playhead_sec", 0.0) or 0.0)
@@ -389,18 +407,29 @@ class VideoTheaterDialog(tk.Toplevel):
         return 1.0
 
     def update_playback_transport(self, tl_sec: float, tot_dur: float):
-        if not self.winfo_exists():
+        if getattr(self, "_is_closing", False):
             return
-        self._draw_scrubber(tl_sec, tot_dur)
-        self._update_timecode_text(tl_sec, tot_dur)
-        self.btn_play.configure(text="||" if self.app._is_playing() else "▶")
-        self.lbl_badges.configure(text=self._get_active_effects_badge_text())
-        if getattr(self.app, "studio_live_preview_mode", False):
-            self.refresh_preview()
+        try:
+            if not self.winfo_exists():
+                return
+        except Exception:
+            return
+        try:
+            self._draw_scrubber(tl_sec, tot_dur)
+            self._update_timecode_text(tl_sec, tot_dur)
+            self.btn_play.configure(text="||" if self.app._is_playing() else "▶")
+            self.lbl_badges.configure(text=self._get_active_effects_badge_text())
+        except Exception:
+            pass
 
     def refresh_preview(self):
         """Paints the current composite video frame onto the theater canvas."""
-        if not self.winfo_exists():
+        if getattr(self, "_is_closing", False):
+            return
+        try:
+            if not self.winfo_exists():
+                return
+        except Exception:
             return
 
         cw = max(100, self.canvas.winfo_width())
@@ -439,13 +468,18 @@ class VideoTheaterDialog(tk.Toplevel):
             "16:9": 16.0 / 9.0,
         }
 
-        # Source frame extraction (High resolution 1920 max dim for theater)
+        # Source frame extraction (use cached frame during playback to prevent main thread stalls)
         c_idx, cur_clip, src_sec = (
             self.app.nle_project.timeline_to_source(tl_sec)
             if hasattr(self.app, "nle_project")
             else (0, None, tl_sec)
         )
-        frame = self.app.fast_preview.get_frame(vpath, src_sec, max_dim=1920) if hasattr(self.app, "fast_preview") else None
+        frame = getattr(self.app, "_cached_player_frame", None)
+        if frame is None:
+            if not self.app._is_playing() and hasattr(self.app, "fast_preview"):
+                frame = self.app.fast_preview.get_frame(vpath, src_sec, max_dim=960)
+            elif hasattr(self.app, "_request_fast_preview_frame"):
+                self.app._request_fast_preview_frame(src_sec)
 
         if frame is not None:
             src_aspect = frame.width / max(1, frame.height)
@@ -758,25 +792,56 @@ class VideoTheaterDialog(tk.Toplevel):
     # Close & Return to Editor
     # -------------------------------------------------------------------------
     def close(self):
-        """Exits fullscreen cleanly and restores main editor UI."""
-        self.app._theater_dialog = None
+        """Exits fullscreen cleanly, safely, and restores main editor UI without hanging or crashing."""
+        if getattr(self, "_is_closing", False):
+            return
+        self._is_closing = True
+
+        # Cancel auto-hide timers
+        if getattr(self, "_auto_hide_timer", None):
+            try:
+                self.after_cancel(self._auto_hide_timer)
+            except Exception:
+                pass
+            self._auto_hide_timer = None
+
+        # Detach dialog reference from app immediately
+        if getattr(self.app, "_theater_dialog", None) is self:
+            self.app._theater_dialog = None
         self.app.video_expanded = False
+
         is_ar = self.is_ar
         if hasattr(self.app, "expand_video_button"):
-            self.app.expand_video_button.configure(text="⛶ تكبير" if is_ar else "⛶ Fullscreen")
+            try:
+                self.expand_video_button.configure(text="⛶ تكبير" if is_ar else "⛶ Fullscreen")
+            except Exception:
+                pass
 
-        # Cleanly re-attach VLC to main window video surface
-        if getattr(self.app, "media_player", None) and hasattr(self.app, "video_surface"):
+        # Unbind window events immediately so no further callbacks fire on this window
+        for seq in ("<Escape>", "<F11>", "<space>", "<Left>", "<Right>", "<Home>", "<End>", "f", "F"):
+            try:
+                self.unbind(seq)
+            except Exception:
+                pass
+
+        # Determine if VLC was directly rendering onto self.video_surface
+        vlc_was_on_theater = (
+            hasattr(self, "video_surface")
+            and self.video_surface.winfo_exists()
+            and self.video_surface.winfo_ismapped()
+            and not getattr(self.app, "studio_live_preview_mode", False)
+        )
+
+        if vlc_was_on_theater and getattr(self.app, "media_player", None) and hasattr(self.app, "video_surface"):
             import sys
             try:
                 was_playing = self.app._is_playing()
                 cur_ms = self.app.media_player.get_time()
-                self.app.media_player.stop()
-                try:
-                    self.destroy()
-                except Exception:
-                    pass
-                self.app.update()
+                # 1. Bring main VLC surface back FIRST before destroying theater window
+                if hasattr(self.app, "_show_vlc_surface"):
+                    self.app._show_vlc_surface()
+                self.app.update_idletasks()
+
                 main_hwnd = self.app.video_surface.winfo_id()
                 if sys.platform.startswith("win"):
                     self.app.media_player.set_hwnd(main_hwnd)
@@ -784,38 +849,41 @@ class VideoTheaterDialog(tk.Toplevel):
                     self.app.media_player.set_nsobject(main_hwnd)
                 else:
                     self.app.media_player.set_xwindow(main_hwnd)
-                self.app.apply_video_aspect_ratio()
-                self.app.apply_video_color_adjustments()
-                self.app.media_player.play()
 
-                def _restore_main_time():
-                    try:
-                        if cur_ms >= 0 and self.app.media_player:
-                            self.app.media_player.set_time(cur_ms)
-                        if not was_playing:
-                            if self.app.media_player:
-                                self.app.media_player.pause()
-                        else:
-                            if hasattr(self.app, "_schedule_playback_tick"):
-                                self.app._schedule_playback_tick()
-                    except Exception:
-                        pass
-                if hasattr(self.app, "after"):
-                    self.app.after(40, _restore_main_time)
+                if cur_ms >= 0:
+                    self.app.media_player.set_time(cur_ms)
+                if was_playing:
+                    self.app.media_player.play()
             except Exception:
                 pass
         else:
+            # In Studio Canvas mode, VLC was never bound to theater HWND.
+            # Just ensure main studio view is cleanly shown.
             try:
-                self.destroy()
+                if getattr(self.app, "studio_live_preview_mode", False):
+                    if hasattr(self.app, "_show_studio_canvas"):
+                        self.app._show_studio_canvas()
+                else:
+                    if hasattr(self.app, "_show_vlc_surface"):
+                        self.app._show_vlc_surface()
             except Exception:
                 pass
 
-        # Refresh main editor view preserving current mode
-        if getattr(self.app, "studio_live_preview_mode", False):
-            if hasattr(self.app, "_show_studio_canvas"):
-                self.app._show_studio_canvas()
-        else:
-            if hasattr(self.app, "_show_vlc_surface"):
-                self.app._show_vlc_surface()
+        # Safely destroy the toplevel window
+        try:
+            self.destroy()
+        except Exception:
+            pass
+
+        # Reapply dark titlebar to main window
+        if hasattr(self.app, "_reapply_dark_titlebar"):
+            try:
+                self.app._reapply_dark_titlebar()
+            except Exception:
+                pass
+
         if hasattr(self.app, "_sync_live_video_overlay"):
-            self.app._sync_live_video_overlay()
+            try:
+                self.app.after(50, self.app._sync_live_video_overlay)
+            except Exception:
+                pass

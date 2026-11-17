@@ -7772,9 +7772,14 @@ class SongCoverApp(
 
     def toggle_app_fullscreen(self):
         th_dlg = getattr(self, "_theater_dialog", None)
-        if th_dlg is not None and th_dlg.winfo_exists():
-            self.toggle_video_size()
-            return
+        if th_dlg is not None:
+            try:
+                if th_dlg.winfo_exists():
+                    th_dlg.close()
+                    return
+            except Exception:
+                pass
+            self._theater_dialog = None
         try:
             is_fs = bool(self.attributes("-fullscreen"))
             new_fs = not is_fs
@@ -7787,8 +7792,14 @@ class SongCoverApp(
 
     def _handle_app_escape(self):
         th_dlg = getattr(self, "_theater_dialog", None)
-        if th_dlg is not None and th_dlg.winfo_exists():
-            self._exit_video_fullscreen()
+        if th_dlg is not None:
+            try:
+                if th_dlg.winfo_exists():
+                    th_dlg.close()
+                    return
+            except Exception:
+                pass
+            self._theater_dialog = None
         elif bool(self.attributes("-fullscreen")):
             self.toggle_app_fullscreen()
 
@@ -8652,17 +8663,33 @@ class SongCoverApp(
         self.log.delete("1.0", "end")
         self.log.configure(state="disabled")
 
+    def report_callback_exception(self, exc, val, tb):
+        """
+        Graceful exception handler for Tkinter callbacks.
+        Logs unexpected errors safely to app_debug.log instead of crashing or showing raw Python popups.
+        """
+        import traceback
+        try:
+            log_path = APP_DIR / "app_debug.log"
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(f"\n--- Exception at {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+                traceback.print_exception(exc, val, tb, file=f)
+        except Exception:
+            pass
+
 
 if __name__ == "__main__":
     try:
         app = SongCoverApp()
         app.mainloop()
+    except (KeyboardInterrupt, SystemExit):
+        pass
     except Exception as e:
         import traceback
         crash_log = APP_DIR / "crash.log"
         try:
-            with open(crash_log, "w", encoding="utf-8") as f:
+            with open(crash_log, "a", encoding="utf-8") as f:
+                f.write(f"\n--- Crash at {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
                 traceback.print_exc(file=f)
-            messagebox.showerror("Error / خطأ", f"حدث خطأ أثناء تشغيل البرنامج:\n{e}\n\nتم حفظ التفاصيل في:\n{crash_log}")
         except Exception:
             pass
