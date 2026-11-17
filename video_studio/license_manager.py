@@ -1,5 +1,5 @@
 """
-ClipCraft Studio - Enterprise Node-Locked Licensing & 30-Day Trial Engine
+ClipCraft Studio - Enterprise Node-Locked Licensing & 10-Day Trial Engine
 Uses RSA-2048 Asymmetric Digital Signatures and Hardware-ID (HWID) binding.
 Author: ahmed elshazly <Elshazly.gsm@gmail.com>
 """
@@ -32,7 +32,7 @@ yoSNSBcm1reCi/3hyWAq/iadlljbSKAm5msXadpricBKleohfO/F/Nl6qfYa0kpW
 OwIDAQAB
 -----END PUBLIC KEY-----"""
 
-TRIAL_DURATION_SECONDS = 30 * 86400  # 30 days trial
+TRIAL_DURATION_SECONDS = 10 * 86400  # 10 days trial
 LICENSE_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "ClipCraftStudio"
 LICENSE_FILE = LICENSE_DIR / "license.key"
 TRIAL_STATE_FILE = LICENSE_DIR / "sys_state.dat"
@@ -280,7 +280,7 @@ def check_license_status() -> Dict[str, Any]:
         except Exception:
             pass
 
-    # 2. Check 3-Day Trial Record
+    # 2. Check 10-Day Trial Record
     rec = _read_trial_record()
     if rec.get("tampered"):
         return {
