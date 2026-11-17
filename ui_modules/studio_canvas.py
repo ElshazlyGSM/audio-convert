@@ -178,6 +178,8 @@ class StudioCanvasMixin:
             self._attach_video_surface()
             self.apply_video_aspect_ratio()
             self.apply_video_color_adjustments()
+        if hasattr(self, "_reapply_dark_titlebar"):
+            self._reapply_dark_titlebar()
         self.after(50, self._sync_live_video_overlay)
 
     # -------------------------------------------------------------------------

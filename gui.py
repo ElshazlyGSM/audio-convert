@@ -1270,23 +1270,64 @@ class SongCoverApp(
         except Exception:
             return False
 
-    @staticmethod
-    def _set_window_immersive_dark_mode(window, is_dark: bool):
+    @classmethod
+    def _set_window_immersive_dark_mode(cls, window, is_dark: bool):
         try:
             import ctypes
+            if not window or not window.winfo_exists():
+                return
             window.update_idletasks()
-            hwnd = ctypes.windll.user32.GetParent(window.winfo_id()) or window.winfo_id()
+            wid = window.winfo_id()
+            hwnd = ctypes.windll.user32.GetAncestor(wid, 2) or ctypes.windll.user32.GetParent(wid) or wid
             if hwnd:
                 val = ctypes.c_int(1 if is_dark else 0)
+                # DWMWA_USE_IMMERSIVE_DARK_MODE = 20 (Windows 11 and Windows 10 build 19041+)
                 res = ctypes.windll.dwmapi.DwmSetWindowAttribute(
                     hwnd, 20, ctypes.byref(val), ctypes.sizeof(val)
                 )
                 if res != 0:
+                    # DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1 = 19 (Windows 10 1809 - 1909)
                     ctypes.windll.dwmapi.DwmSetWindowAttribute(
                         hwnd, 19, ctypes.byref(val), ctypes.sizeof(val)
                     )
+                # DWMWA_CAPTION_COLOR = 35 (Windows 11 build 22000+) - explicitly set titlebar color
+                if is_dark:
+                    cap_color = ctypes.c_uint(0x00201B18)  # #181b20 in BGR format
+                    ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                        hwnd, 35, ctypes.byref(cap_color), ctypes.sizeof(cap_color)
+                    )
+                    txt_color = ctypes.c_uint(0x00F3EDE6)  # #e6edf3 in BGR format
+                    ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                        hwnd, 36, ctypes.byref(txt_color), ctypes.sizeof(txt_color)
+                    )
+                else:
+                    cap_color = ctypes.c_uint(0x00F0F0F0)  # #f0f0f0 in BGR format
+                    ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                        hwnd, 35, ctypes.byref(cap_color), ctypes.sizeof(cap_color)
+                    )
+                    txt_color = ctypes.c_uint(0x001A1A1A)  # #1a1a1a in BGR format
+                    ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                        hwnd, 36, ctypes.byref(txt_color), ctypes.sizeof(txt_color)
+                    )
+
+                # Force Windows DWM to redraw the non-client frame (title bar) immediately
+                ctypes.windll.user32.SetWindowPos(
+                    hwnd, 0, 0, 0, 0, 0,
+                    0x0002 | 0x0001 | 0x0004 | 0x0020  # SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED
+                )
         except Exception:
             pass
+
+    def _reapply_dark_titlebar(self):
+        is_dark = getattr(self, "theme_var", None) and self.theme_var.get() == "dark"
+        self._set_window_immersive_dark_mode(self, is_dark)
+        self.after(50, lambda: self._set_window_immersive_dark_mode(self, is_dark))
+        self.after(200, lambda: self._set_window_immersive_dark_mode(self, is_dark))
+
+    def _on_window_map(self, event):
+        if event.widget == self:
+            is_dark = getattr(self, "theme_var", None) and self.theme_var.get() == "dark"
+            self._set_window_immersive_dark_mode(self, is_dark)
 
     def _apply_theme_to_toplevel(self, window):
         is_dark = getattr(self, "theme_var", None) and self.theme_var.get() == "dark"
@@ -1829,6 +1870,7 @@ class SongCoverApp(
         self.bind("<F12>", lambda _e: self.capture_current_frame_snapshot(), add="+")
         self.bind("<Escape>", lambda _e: self._handle_app_escape(), add="+")
         self.bind("<F11>", lambda _e: self.toggle_app_fullscreen(), add="+")
+        self.bind("<Map>", self._on_window_map, add="+")
 
         # ------------------ Row 3: Bottom Panel (Progress & Log) ------------------
         bottom_box = ttk.Frame(self, padding=(16, 0, 16, 10))
@@ -7667,6 +7709,7 @@ class SongCoverApp(
         try:
             if self.wm_state() != "iconic":
                 self.state("zoomed")
+                self._reapply_dark_titlebar()
         except Exception:
             pass
 
@@ -7677,9 +7720,11 @@ class SongCoverApp(
             return
         try:
             is_fs = bool(self.attributes("-fullscreen"))
-            self.attributes("-fullscreen", not is_fs)
-            if is_fs:
+            new_fs = not is_fs
+            self.attributes("-fullscreen", new_fs)
+            if not new_fs:
                 self.state("zoomed")
+                self._reapply_dark_titlebar()
         except Exception:
             pass
 
