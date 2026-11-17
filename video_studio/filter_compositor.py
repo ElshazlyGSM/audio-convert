@@ -915,6 +915,18 @@ def export_styled_video(
                 if clip.get("audio_denoise", False):
                     a_ops.append("afftdn=nf=-25")
 
+                # Audio delay/lead if unlinked audio track was shifted relative to video
+                if clip.get("audio_tl_start") is not None:
+                    a_tl_s = float(clip["audio_tl_start"])
+                    v_tl_s = float(clip.get("tl_start", desired_tl_start))
+                    diff_s = a_tl_s - v_tl_s
+                    if diff_s > 0.02:
+                        ms_del = int(round(diff_s * 1000))
+                        a_ops.append(f"adelay=delays={ms_del}|{ms_del}:all=1")
+                    elif diff_s < -0.02:
+                        lead_s = abs(diff_s)
+                        a_ops.append(f"atrim=start={lead_s:.3f},asetpts=PTS-STARTPTS")
+
                 a_ops.append("aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo")
                 chains.append(f"[{input_idx}:a]{','.join(a_ops)}[a_seg_{seg_idx}]")
                 concat_inputs.append(f"[a_seg_{seg_idx}]")

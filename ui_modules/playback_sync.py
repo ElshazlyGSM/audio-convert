@@ -164,6 +164,17 @@ class PlaybackSyncMixin:
         except Exception:
             pass
 
+        # Real-time hardware audio delay / advance in VLC
+        try:
+            if clip and clip.get("audio_tl_start") is not None:
+                offset_s = float(clip["audio_tl_start"]) - float(clip.get("tl_start", 0.0))
+                # VLC audio delay: positive value delays audio, negative advances audio (microseconds)
+                self.media_player.audio_set_delay(int(offset_s * 1_000_000))
+            else:
+                self.media_player.audio_set_delay(0)
+        except Exception:
+            pass
+
     def play_source_file(self):
         if not self.input_path or not self.input_path.is_file():
             messagebox.showwarning(self.text("app_title"), self.text("choose_single_trim"))

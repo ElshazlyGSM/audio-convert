@@ -270,6 +270,11 @@ class NLEProjectState:
     @property
     def total_duration(self) -> float:
         max_end = float(self.clips[-1].get("tl_end", 0.0)) if self.clips else float(self.source_duration or 0.0)
+        for c in self.clips:
+            v_end = float(c.get("tl_end", 0.0))
+            a_st = float(c.get("audio_tl_start", c.get("tl_start", 0.0)))
+            a_dur = float(c.get("audio_tl_dur", c.get("tl_dur", 0.0)))
+            max_end = max(max_end, v_end, a_st + a_dur)
         tracks_to_check = [self.media_items, self.text_items, self.logo_items, getattr(self, "audio_items", [])]
         if hasattr(self, "extra_tracks") and self.extra_tracks:
             tracks_to_check.extend(self.extra_tracks.values())

@@ -1857,15 +1857,29 @@ class DaVinciTimelinePanel(ttk.Frame):
                 font=("Segoe UI", 9, "bold"),
             )
         for idx, clip in enumerate(self.nle.clips):
-            tl_s = clip["tl_start"]
-            tl_e = clip["tl_end"]
-            x0 = self._sec_to_x(tl_s, tot_dur, tot_px)
-            x1 = max(x0 + 6, self._sec_to_x(tl_e, tot_dur, tot_px))
-            if x1 < self.HEADER_W or x0 > cw:
+            tl_s = float(clip["tl_start"])
+            tl_e = float(clip["tl_end"])
+            v_tl_s = tl_s
+            v_tl_e = tl_e
+            vx0 = self._sec_to_x(v_tl_s, tot_dur, tot_px)
+            vx1 = max(vx0 + 6, self._sec_to_x(v_tl_e, tot_dur, tot_px))
+
+            a_tl_s = float(clip["audio_tl_start"]) if clip.get("audio_tl_start") is not None else v_tl_s
+            a_tl_dur = float(clip.get("audio_tl_dur", v_tl_e - v_tl_s))
+            a_tl_e = a_tl_s + a_tl_dur
+            ax0 = self._sec_to_x(a_tl_s, tot_dur, tot_px)
+            ax1 = max(ax0 + 6, self._sec_to_x(a_tl_e, tot_dur, tot_px))
+
+            v_visible = not (vx1 < self.HEADER_W or vx0 > cw)
+            a_visible = not (ax1 < self.HEADER_W or ax0 > cw)
+            if not v_visible and not a_visible:
                 continue
 
-            dx0 = max(self.HEADER_W, x0)
-            dx1 = min(cw, x1)
+            v_dx0 = max(self.HEADER_W, vx0)
+            v_dx1 = min(cw, vx1)
+            a_dx0 = max(self.HEADER_W, ax0)
+            a_dx1 = min(cw, ax1)
+
             is_v_sel = (self.selected_ref in (("clip", idx), ("V1_clip", idx))) or (("clip", idx) in getattr(self, "selected_items", set())) or (("V1_clip", idx) in getattr(self, "selected_items", set()))
             is_a_sel = (self.selected_ref in (("clip", idx), ("A1_clip", idx))) or (("clip", idx) in getattr(self, "selected_items", set())) or (("A1_clip", idx) in getattr(self, "selected_items", set()))
             is_sil_clip = str(clip.get("name", "")).startswith("🔇")
@@ -1875,130 +1889,137 @@ class DaVinciTimelinePanel(ttk.Frame):
             a_out_c = "#ffd700" if is_a_sel else "#11141a"
             a_out_w = 2 if is_a_sel else 1
 
-            v_fill = "#3a2528" if is_sil_clip else ("#1e3d4f" if is_compound else "#28486e")
-            v_hdr = "#543237" if is_sil_clip else ("#2a5a73" if is_compound else "#366194")
-            c.create_rectangle(dx0, v1_y0 + 2, dx1 - 1, v1_y1 - 2, fill=v_fill, outline=v_out_c, width=v_out_w)
+            # --- V1 Blue Video Clip Block ---
+            if v_visible and v_dx1 > v_dx0:
+                v_fill = "#3a2528" if is_sil_clip else ("#1e3d4f" if is_compound else "#28486e")
+                v_hdr = "#543237" if is_sil_clip else ("#2a5a73" if is_compound else "#366194")
+                c.create_rectangle(v_dx0, v1_y0 + 2, v_dx1 - 1, v1_y1 - 2, fill=v_fill, outline=v_out_c, width=v_out_w)
 
-            badges = []
-            if is_compound:
-                badges.append(f"🔗{len(clip['sub_clips'])} " + ("أجزاء" if ar else "parts"))
-            if clip.get("custom_transform"):
-                badges.append(f"🔍{float(clip.get('zoom', 1.0)):.1f}x")
-            if abs(float(clip.get("speed", 1.0)) - 1.0) > 0.02:
-                badges.append(f"⚡{float(clip.get('speed', 1.0)):.2g}x")
-            title_str = f"{clip.get('name', f'Clip {idx+1}')}  {' '.join(badges)}".strip()
-            avail_w = dx1 - dx0 - 10
-            if avail_w > 28:
-                c.create_text(
-                    dx0 + 6,
-                    v1_y1 - 10,
-                    text=title_str[: max(4, int(avail_w / 6.5))],
-                    anchor="w",
-                    fill="#ffffff",
-                    font=("Segoe UI", 8, "bold"),
-                )
-                dur_lbl = f"@{tl_s:.1f}s | {self._fmt_tc(clip['src_start'], 'tenth')}→{self._fmt_tc(clip['src_end'], 'tenth')}"
-                if avail_w > 76:
+                badges = []
+                if is_compound:
+                    badges.append(f"🔗{len(clip['sub_clips'])} " + ("أجزاء" if ar else "parts"))
+                if clip.get("custom_transform"):
+                    badges.append(f"🔍{float(clip.get('zoom', 1.0)):.1f}x")
+                if abs(float(clip.get("speed", 1.0)) - 1.0) > 0.02:
+                    badges.append(f"⚡{float(clip.get('speed', 1.0)):.2g}x")
+                title_str = f"{clip.get('name', f'Clip {idx+1}')}  {' '.join(badges)}".strip()
+                avail_vw = v_dx1 - v_dx0 - 10
+                if avail_vw > 28:
                     c.create_text(
-                        dx0 + 6,
-                        v1_y0 + 10,
-                        text=dur_lbl[: max(6, int(avail_w / 5.8))],
+                        v_dx0 + 6,
+                        v1_y1 - 10,
+                        text=title_str[: max(4, int(avail_vw / 6.5))],
                         anchor="w",
-                        fill="#9ec5fe",
-                        font=("Consolas", 7),
+                        fill="#ffffff",
+                        font=("Segoe UI", 8, "bold"),
                     )
+                    dur_lbl = f"@{v_tl_s:.1f}s | {self._fmt_tc(clip['src_start'], 'tenth')}→{self._fmt_tc(clip['src_end'], 'tenth')}"
+                    if avail_vw > 76:
+                        c.create_text(
+                            v_dx0 + 6,
+                            v1_y0 + 10,
+                            text=dur_lbl[: max(6, int(avail_vw / 5.8))],
+                            anchor="w",
+                            fill="#9ec5fe",
+                            font=("Consolas", 7),
+                        )
 
-            if is_v_sel:
-                c.create_rectangle(dx0, v1_y0 + 2, min(dx1, dx0 + 4), v1_y1 - 2, fill="#ffffff", outline="")
-                c.create_rectangle(max(dx0, dx1 - 5), v1_y0 + 2, dx1 - 1, v1_y1 - 2, fill="#ffffff", outline="")
+                if is_v_sel:
+                    c.create_rectangle(v_dx0, v1_y0 + 2, min(v_dx1, v_dx0 + 4), v1_y1 - 2, fill="#ffffff", outline="")
+                    c.create_rectangle(max(v_dx0, v_dx1 - 5), v1_y0 + 2, v_dx1 - 1, v1_y1 - 2, fill="#ffffff", outline="")
 
             # --- A1 Green Audio Clip Block + High-Density Waveform ---
-            clip_muted = (not a1_track_on) or bool(clip.get("muted", False)) or float(clip.get("volume", 1.0)) <= 0.01
-            a_fill = "#1d2922" if clip_muted else "#2c643b"
-            c.create_rectangle(dx0, a1_y0 + 2, dx1 - 1, a1_y1 - 2, fill=a_fill, outline=a_out_c, width=a_out_w)
+            if a_visible and a_dx1 > a_dx0:
+                clip_muted = (not a1_track_on) or bool(clip.get("muted", False)) or float(clip.get("volume", 1.0)) <= 0.01
+                a_fill = "#1d2922" if clip_muted else "#2c643b"
+                c.create_rectangle(a_dx0, a1_y0 + 2, a_dx1 - 1, a1_y1 - 2, fill=a_fill, outline=a_out_c, width=a_out_w)
 
-            wf_mid = (a1_y0 + a1_y1) / 2.0
-            wf_half = max(3.0, (a1_y1 - a1_y0) / 2.0 - 5.0)
-            center_line_col = "#3d5747" if clip_muted else "#5bb87e"
-            wave_fill = "#56695e" if clip_muted else "#e2faeb"
+                wf_mid = (a1_y0 + a1_y1) / 2.0
+                wf_half = max(3.0, (a1_y1 - a1_y0) / 2.0 - 5.0)
+                center_line_col = "#3d5747" if clip_muted else "#5bb87e"
+                wave_fill = "#56695e" if clip_muted else "#e2faeb"
 
-            px_span = int(dx1 - dx0 - 2)
-            if px_span >= 2:
-                peaks = self.waveform_peaks
-                n_peaks = len(peaks) if peaks else 0
-                cs0 = float(clip["src_start"])
-                cs1 = float(clip["src_end"])
-                c_span = max(0.05, cs1 - cs0)
-                full_clip_w = max(1.0, x1 - x0)
-                vol_mul = min(1.5, float(clip.get("volume", 1.0)))
+                px_span = int(a_dx1 - a_dx0 - 2)
+                if px_span >= 2:
+                    peaks = self.waveform_peaks
+                    n_peaks = len(peaks) if peaks else 0
+                    cs0 = float(clip.get("audio_src_start", clip["src_start"]))
+                    cs1 = float(clip.get("audio_src_end", clip["src_end"]))
+                    c_span = max(0.05, cs1 - cs0)
+                    full_clip_w = max(1.0, ax1 - ax0)
+                    vol_mul = min(1.5, float(clip.get("volume", 1.0)))
 
-                step_px = 1 if px_span <= 1800 else 2
-                top_pts = []
-                bot_pts = []
+                    step_px = 1 if px_span <= 1800 else 2
+                    top_pts = []
+                    bot_pts = []
 
-                for bx in range(int(dx0 + 1), int(dx1 - 1), step_px):
-                    rel_frac0 = max(0.0, min(1.0, (bx - x0) / full_clip_w))
-                    rel_frac1 = max(0.0, min(1.0, (bx + step_px - x0) / full_clip_w))
-                    t0 = cs0 + rel_frac0 * c_span
-                    t1 = cs0 + rel_frac1 * c_span
-                    if t1 < t0:
-                        t0, t1 = t1, t0
+                    for bx in range(int(a_dx0 + 1), int(a_dx1 - 1), step_px):
+                        rel_frac0 = max(0.0, min(1.0, (bx - ax0) / full_clip_w))
+                        rel_frac1 = max(0.0, min(1.0, (bx + step_px - ax0) / full_clip_w))
+                        t0 = cs0 + rel_frac0 * c_span
+                        t1 = cs0 + rel_frac1 * c_span
+                        if t1 < t0:
+                            t0, t1 = t1, t0
 
-                    if n_peaks > 0 and src_total > 0:
-                        p0 = int((t0 / src_total) * n_peaks)
-                        p1 = int((t1 / src_total) * n_peaks)
-                        if p1 <= p0:
-                            idx_p = min(n_peaks - 1, max(0, p0))
-                            amp = peaks[idx_p]
+                        if n_peaks > 0 and src_total > 0:
+                            p0 = int((t0 / src_total) * n_peaks)
+                            p1 = int((t1 / src_total) * n_peaks)
+                            if p1 <= p0:
+                                idx_p = min(n_peaks - 1, max(0, p0))
+                                amp = peaks[idx_p]
+                            else:
+                                sub = peaks[max(0, p0): min(n_peaks, p1 + 1)]
+                                amp = max(sub) if sub else 0.0
                         else:
-                            sub = peaks[max(0, p0): min(n_peaks, p1 + 1)]
-                            amp = max(sub) if sub else 0.0
-                    else:
-                        amp = 0.0
+                            amp = 0.0
 
-                    amp = min(1.0, max(0.0, amp * vol_mul))
-                    if amp <= 0.005:
-                        bh = 0.0
-                    else:
-                        bh = max(1.2, min(wf_half, amp * wf_half))
+                        amp = min(1.0, max(0.0, amp * vol_mul))
+                        if amp <= 0.005:
+                            bh = 0.0
+                        else:
+                            bh = max(1.2, min(wf_half, amp * wf_half))
 
-                    top_pts.append((bx, wf_mid - bh))
-                    bot_pts.append((bx, wf_mid + bh))
+                        top_pts.append((bx, wf_mid - bh))
+                        bot_pts.append((bx, wf_mid + bh))
 
-                if top_pts and bot_pts:
-                    poly_pts = []
-                    for px, py in top_pts:
-                        poly_pts.extend((px, py))
-                    for px, py in reversed(bot_pts):
-                        poly_pts.extend((px, py))
-                    c.create_polygon(poly_pts, fill=wave_fill, outline="")
+                    if top_pts and bot_pts:
+                        poly_pts = []
+                        for px, py in top_pts:
+                            poly_pts.extend((px, py))
+                        for px, py in reversed(bot_pts):
+                            poly_pts.extend((px, py))
+                        c.create_polygon(poly_pts, fill=wave_fill, outline="")
 
-                # Horizontal baseline drawn across the entire clip length
-                c.create_line(dx0 + 1, wf_mid, dx1 - 1, wf_mid, fill=center_line_col, width=1)
+                    # Horizontal baseline drawn across the entire clip length
+                    c.create_line(a_dx0 + 1, wf_mid, a_dx1 - 1, wf_mid, fill=center_line_col, width=1)
 
-            if is_a_sel:
-                c.create_rectangle(dx0, a1_y0 + 2, min(dx1, dx0 + 4), a1_y1 - 2, fill="#ffffff", outline="")
-                c.create_rectangle(max(dx0, dx1 - 5), a1_y0 + 2, dx1 - 1, a1_y1 - 2, fill="#ffffff", outline="")
+                if is_a_sel:
+                    c.create_rectangle(a_dx0, a1_y0 + 2, min(a_dx1, a_dx0 + 4), a1_y1 - 2, fill="#ffffff", outline="")
+                    c.create_rectangle(max(a_dx0, a_dx1 - 5), a1_y0 + 2, a_dx1 - 1, a1_y1 - 2, fill="#ffffff", outline="")
 
-            if avail_w > 36:
-                a_lbl = "🔇 صامت" if (clip_muted and ar) else ("🔇 Muted" if clip_muted else f"{clip.get('name', 'Audio')}")
-                # Subtle dark text shadow for high contrast readability against waveform
-                c.create_text(dx0 + 7, a1_y1 - 8, text=a_lbl[: max(4, int(avail_w / 6.5))], anchor="w", fill="#0d1b11", font=("Segoe UI", 8, "bold"))
-                c.create_text(dx0 + 6, a1_y1 - 9, text=a_lbl[: max(4, int(avail_w / 6.5))], anchor="w", fill="#ffffff", font=("Segoe UI", 8, "bold"))
+                avail_aw = a_dx1 - a_dx0 - 10
+                if avail_aw > 36:
+                    a_lbl = "🔇 صامت" if (clip_muted and ar) else ("🔇 Muted" if clip_muted else f"{clip.get('name', 'Audio')}")
+                    # Subtle dark text shadow for high contrast readability against waveform
+                    c.create_text(a_dx0 + 7, a1_y1 - 8, text=a_lbl[: max(4, int(avail_aw / 6.5))], anchor="w", fill="#0d1b11", font=("Segoe UI", 8, "bold"))
+                    c.create_text(a_dx0 + 6, a1_y1 - 9, text=a_lbl[: max(4, int(avail_aw / 6.5))], anchor="w", fill="#ffffff", font=("Segoe UI", 8, "bold"))
 
-            if idx > 0 and self.HEADER_W <= x0 <= cw:
-                c.create_line(x0, v1_y0, x0, a1_y1, fill="#090b0f", width=2)
+            if idx > 0:
+                if self.HEADER_W <= vx0 <= cw:
+                    c.create_line(vx0, v1_y0, vx0, v1_y1, fill="#090b0f", width=2)
+                if self.HEADER_W <= ax0 <= cw:
+                    c.create_line(ax0, a1_y0, ax0, a1_y1, fill="#090b0f", width=2)
 
             if getattr(self, "linked_selection", True):
-                self._item_hit_boxes.append(("clip", idx, x0, v1_y0 + 2, x1, a1_y1 - 2))
+                self._item_hit_boxes.append(("clip", idx, min(vx0, ax0), v1_y0 + 2, max(vx1, ax1), a1_y1 - 2))
             else:
-                self._item_hit_boxes.append(("V1_clip", idx, x0, v1_y0 + 2, x1, v1_y1 - 2))
-                self._item_hit_boxes.append(("A1_clip", idx, x0, a1_y0 + 2, x1, a1_y1 - 2))
+                self._item_hit_boxes.append(("V1_clip", idx, vx0, v1_y0 + 2, vx1, v1_y1 - 2))
+                self._item_hit_boxes.append(("A1_clip", idx, ax0, a1_y0 + 2, ax1, a1_y1 - 2))
 
             # 4c. Draw transition indicator badge and register cut hit boxes
             if idx < len(self.nle.clips) - 1:
                 cut_idx = idx
-                cut_x = x1
+                cut_x = vx1
                 tc = self._get_transitions_config()
                 en = bool(tc.get("enabled", False))
                 apply_all = bool(tc.get("apply_to_all", True))
@@ -2239,10 +2260,20 @@ class DaVinciTimelinePanel(ttk.Frame):
 
         candidates = [0.0, tot_dur, self.playhead_sec]
         for idx, c in enumerate(self.nle.clips):
-            if ignore_ref == ("clip", idx):
-                continue
-            candidates.append(c["tl_start"])
-            candidates.append(c["tl_end"])
+            if ignore_ref in (("clip", idx), ("V1_clip", idx)):
+                pass
+            else:
+                candidates.append(float(c.get("tl_start", 0.0)))
+                candidates.append(float(c.get("tl_end", float(c.get("tl_start", 0.0)) + 1.0)))
+
+            if ignore_ref in (("clip", idx), ("A1_clip", idx)):
+                pass
+            else:
+                if c.get("audio_tl_start") is not None:
+                    a_s = float(c["audio_tl_start"])
+                    a_dur = float(c.get("audio_tl_dur", c.get("tl_dur", 1.0)))
+                    candidates.append(a_s)
+                    candidates.append(a_s + a_dur)
 
         best_d = thresh_sec
         snapped = raw_sec
@@ -2453,10 +2484,17 @@ class DaVinciTimelinePanel(ttk.Frame):
 
             # Record origins for multi-drag
             self._drag_multi_origins.clear()
+            self._drag_multi_audio_origins = {}
             for sel_k, sel_i in self.selected_items:
                 if sel_k in ("clip", "V1_clip", "A1_clip"):
                     if 0 <= sel_i < len(self.nle.clips):
-                        self._drag_multi_origins[(sel_k, sel_i)] = float(self.nle.clips[sel_i]["tl_start"])
+                        cl = self.nle.clips[sel_i]
+                        if sel_k == "A1_clip":
+                            self._drag_multi_origins[(sel_k, sel_i)] = float(cl.get("audio_tl_start", cl["tl_start"]))
+                        else:
+                            self._drag_multi_origins[(sel_k, sel_i)] = float(cl["tl_start"])
+                            if cl.get("audio_tl_start") is not None:
+                                self._drag_multi_audio_origins[(sel_k, sel_i)] = float(cl["audio_tl_start"])
                 else:
                     t_list = self.nle.get_track_list(sel_k)
                     if 0 <= sel_i < len(t_list):
@@ -2483,9 +2521,16 @@ class DaVinciTimelinePanel(ttk.Frame):
                         self._drag_action = "move_ov"
                 else:
                     cl = self.nle.clips[idx]
-                    self._drag_orig_s = float(cl["src_start"])
-                    self._drag_orig_e = float(cl["src_end"])
-                    self._drag_orig_tl_s = float(cl["tl_start"])
+                    if kind == "A1_clip":
+                        self._drag_orig_s = float(cl.get("audio_src_start", cl["src_start"]))
+                        self._drag_orig_e = float(cl.get("audio_src_end", cl["src_end"]))
+                        self._drag_orig_tl_s = float(cl.get("audio_tl_start", cl["tl_start"]))
+                        self._drag_orig_audio_tl_s = self._drag_orig_tl_s
+                    else:
+                        self._drag_orig_s = float(cl["src_start"])
+                        self._drag_orig_e = float(cl["src_end"])
+                        self._drag_orig_tl_s = float(cl["tl_start"])
+                        self._drag_orig_audio_tl_s = float(cl.get("audio_tl_start", cl["tl_start"]))
                     if part == "left":
                         self._drag_action = "trim_clip_left"
                         self._drag_multi_origins = {("clip", j): float(self.nle.clips[j]["tl_start"]) for j in range(len(self.nle.clips))}
@@ -2572,8 +2617,26 @@ class DaVinciTimelinePanel(ttk.Frame):
             for sel_k, sel_i in self.selected_items:
                 if sel_k in ("clip", "V1_clip", "A1_clip"):
                     if 0 <= sel_i < len(self.nle.clips):
-                        orig_tl = self._drag_multi_origins.get((sel_k, sel_i), float(self.nle.clips[sel_i]["tl_start"]))
-                        self.nle.clips[sel_i]["tl_start"] = round(max(0.0, orig_tl + dt_sec), 3)
+                        cl = self.nle.clips[sel_i]
+                        if sel_k == "A1_clip":
+                            orig_a_tl = self._drag_multi_origins.get((sel_k, sel_i), float(cl.get("audio_tl_start", cl["tl_start"])))
+                            cl["audio_tl_start"] = round(max(0.0, orig_a_tl + dt_sec), 3)
+                            if "audio_tl_dur" not in cl:
+                                cl["audio_tl_dur"] = float(cl.get("tl_dur", cl["src_end"] - cl["src_start"]))
+                        elif sel_k == "V1_clip":
+                            if cl.get("audio_tl_start") is None:
+                                cl["audio_tl_start"] = float(cl["tl_start"])
+                                cl["audio_tl_dur"] = float(cl.get("tl_dur", cl["src_end"] - cl["src_start"]))
+                                cl["audio_src_start"] = float(cl["src_start"])
+                                cl["audio_src_end"] = float(cl["src_end"])
+                            orig_tl = self._drag_multi_origins.get((sel_k, sel_i), float(cl["tl_start"]))
+                            cl["tl_start"] = round(max(0.0, orig_tl + dt_sec), 3)
+                        else:  # "clip" (linked)
+                            orig_tl = self._drag_multi_origins.get((sel_k, sel_i), float(cl["tl_start"]))
+                            cl["tl_start"] = round(max(0.0, orig_tl + dt_sec), 3)
+                            if cl.get("audio_tl_start") is not None:
+                                orig_a_tl = getattr(self, "_drag_multi_audio_origins", {}).get((sel_k, sel_i), float(cl["audio_tl_start"]))
+                                cl["audio_tl_start"] = round(max(0.0, orig_a_tl + dt_sec), 3)
                 else:
                     t_list = self.nle.get_track_list(sel_k)
                     if 0 <= sel_i < len(t_list):
@@ -2648,38 +2711,116 @@ class DaVinciTimelinePanel(ttk.Frame):
                     self._undo_pushed_for_drag = True
                 new_s = max(0.0, min(self._drag_orig_e - 0.12, self._drag_orig_s + dt_sec * spd))
                 delta_tl = (new_s - self._drag_orig_s) / spd
-                cl["src_start"] = round(new_s, 3)
-                if not self.nle.ripple_mode:
-                    cl["tl_start"] = round(max(0.0, self._drag_orig_tl_s + delta_tl), 3)
-                self.nle.recompute_timeline(pack_gaps=False)
-                self.redraw()
+                if kind == "A1_clip":
+                    cl["audio_src_start"] = round(new_s, 3)
+                    if "audio_src_end" not in cl:
+                        cl["audio_src_end"] = float(cl["src_end"])
+                    cl["audio_tl_start"] = round(max(0.0, self._drag_orig_audio_tl_s + delta_tl), 3)
+                    cl["audio_tl_dur"] = round(max(0.1, (float(cl["audio_src_end"]) - new_s) / spd), 3)
+                    self.redraw()
+                elif kind == "V1_clip":
+                    if cl.get("audio_tl_start") is None:
+                        cl["audio_tl_start"] = float(cl["tl_start"])
+                        cl["audio_tl_dur"] = float(cl.get("tl_dur", cl["src_end"] - cl["src_start"]))
+                        cl["audio_src_start"] = float(cl["src_start"])
+                        cl["audio_src_end"] = float(cl["src_end"])
+                    cl["src_start"] = round(new_s, 3)
+                    if not self.nle.ripple_mode:
+                        cl["tl_start"] = round(max(0.0, self._drag_orig_tl_s + delta_tl), 3)
+                    self.nle.recompute_timeline(pack_gaps=False)
+                    self.redraw()
+                else:  # kind == "clip"
+                    cl["src_start"] = round(new_s, 3)
+                    if cl.get("audio_tl_start") is not None:
+                        cl["audio_src_start"] = round(new_s, 3)
+                        cl["audio_tl_start"] = round(max(0.0, self._drag_orig_audio_tl_s + delta_tl), 3)
+                        cl["audio_tl_dur"] = round(max(0.1, (float(cl.get("audio_src_end", cl["src_end"])) - new_s) / spd), 3)
+                    if not self.nle.ripple_mode:
+                        cl["tl_start"] = round(max(0.0, self._drag_orig_tl_s + delta_tl), 3)
+                    self.nle.recompute_timeline(pack_gaps=False)
+                    self.redraw()
 
             elif self._drag_action == "trim_clip_right":
                 if not self._undo_pushed_for_drag:
                     self.nle.push_undo()
                     self._undo_pushed_for_drag = True
                 new_e = max(self._drag_orig_s + 0.12, min(src_max, self._drag_orig_e + dt_sec * spd))
-                cl["src_end"] = round(new_e, 3)
-                if self.nle.ripple_mode and idx < len(self.nle.clips) - 1:
-                    delta_tl = (new_e - self._drag_orig_e) / spd
-                    for j in range(idx + 1, len(self.nle.clips)):
-                        orig_start = self._drag_multi_origins.get(("clip", j), float(self.nle.clips[j]["tl_start"]))
-                        self.nle.clips[j]["tl_start"] = round(max(0.0, orig_start + delta_tl), 3)
-                self.nle.recompute_timeline(pack_gaps=False)
-                self.redraw()
+                if kind == "A1_clip":
+                    cl["audio_src_end"] = round(new_e, 3)
+                    if "audio_src_start" not in cl:
+                        cl["audio_src_start"] = float(cl["src_start"])
+                    if "audio_tl_start" not in cl:
+                        cl["audio_tl_start"] = float(cl["tl_start"])
+                    cl["audio_tl_dur"] = round(max(0.1, (new_e - float(cl["audio_src_start"])) / spd), 3)
+                    self.redraw()
+                elif kind == "V1_clip":
+                    if cl.get("audio_tl_start") is None:
+                        cl["audio_tl_start"] = float(cl["tl_start"])
+                        cl["audio_tl_dur"] = float(cl.get("tl_dur", cl["src_end"] - cl["src_start"]))
+                        cl["audio_src_start"] = float(cl["src_start"])
+                        cl["audio_src_end"] = float(cl["src_end"])
+                    cl["src_end"] = round(new_e, 3)
+                    if self.nle.ripple_mode and idx < len(self.nle.clips) - 1:
+                        delta_tl = (new_e - self._drag_orig_e) / spd
+                        for j in range(idx + 1, len(self.nle.clips)):
+                            orig_start = self._drag_multi_origins.get(("clip", j), float(self.nle.clips[j]["tl_start"]))
+                            self.nle.clips[j]["tl_start"] = round(max(0.0, orig_start + delta_tl), 3)
+                    self.nle.recompute_timeline(pack_gaps=False)
+                    self.redraw()
+                else:  # kind == "clip"
+                    cl["src_end"] = round(new_e, 3)
+                    if cl.get("audio_tl_start") is not None:
+                        cl["audio_src_end"] = round(new_e, 3)
+                        cl["audio_tl_dur"] = round(max(0.1, (new_e - float(cl.get("audio_src_start", cl["src_start"]))) / spd), 3)
+                    if self.nle.ripple_mode and idx < len(self.nle.clips) - 1:
+                        delta_tl = (new_e - self._drag_orig_e) / spd
+                        for j in range(idx + 1, len(self.nle.clips)):
+                            orig_start = self._drag_multi_origins.get(("clip", j), float(self.nle.clips[j]["tl_start"]))
+                            self.nle.clips[j]["tl_start"] = round(max(0.0, orig_start + delta_tl), 3)
+                    self.nle.recompute_timeline(pack_gaps=False)
+                    self.redraw()
 
             elif self._drag_action == "move_or_click_clip" and abs(dx_px) > 4:
                 if not self._undo_pushed_for_drag:
                     self.nle.push_undo()
                     self._undo_pushed_for_drag = True
-                raw_tl_s = max(0.0, self._drag_orig_tl_s + dt_sec)
-                snapped_tl_s, guide = self._snap_time(raw_tl_s, ignore_ref=(kind, idx))
-                self._snap_guide_sec = guide
-                new_idx = self.nle.move_clip_to_time(idx, snapped_tl_s, push_undo=False)
-                self._drag_target = (kind, new_idx)
-                self.selected_ref = (kind, new_idx)
-                self._sync_selection_refs()
-                self.redraw()
+                if kind == "A1_clip":
+                    raw_a_s = max(0.0, self._drag_orig_audio_tl_s + dt_sec)
+                    snapped_a_s, guide = self._snap_time(raw_a_s, ignore_ref=("A1_clip", idx))
+                    self._snap_guide_sec = guide
+                    cl["audio_tl_start"] = round(snapped_a_s, 3)
+                    if "audio_tl_dur" not in cl:
+                        cl["audio_tl_dur"] = round(float(cl.get("tl_dur", cl["src_end"] - cl["src_start"])), 3)
+                    if "audio_src_start" not in cl:
+                        cl["audio_src_start"] = float(cl["src_start"])
+                    if "audio_src_end" not in cl:
+                        cl["audio_src_end"] = float(cl["src_end"])
+                    self.redraw()
+                elif kind == "V1_clip":
+                    if cl.get("audio_tl_start") is None:
+                        cl["audio_tl_start"] = float(cl["tl_start"])
+                        cl["audio_tl_dur"] = float(cl.get("tl_dur", cl["src_end"] - cl["src_start"]))
+                        cl["audio_src_start"] = float(cl["src_start"])
+                        cl["audio_src_end"] = float(cl["src_end"])
+                    raw_tl_s = max(0.0, self._drag_orig_tl_s + dt_sec)
+                    snapped_tl_s, guide = self._snap_time(raw_tl_s, ignore_ref=("V1_clip", idx))
+                    self._snap_guide_sec = guide
+                    new_idx = self.nle.move_clip_to_time(idx, snapped_tl_s, push_undo=False)
+                    self._drag_target = (kind, new_idx)
+                    self.selected_ref = (kind, new_idx)
+                    self._sync_selection_refs()
+                    self.redraw()
+                else:  # kind == "clip" (linked)
+                    raw_tl_s = max(0.0, self._drag_orig_tl_s + dt_sec)
+                    snapped_tl_s, guide = self._snap_time(raw_tl_s, ignore_ref=("clip", idx))
+                    self._snap_guide_sec = guide
+                    new_idx = self.nle.move_clip_to_time(idx, snapped_tl_s, push_undo=False)
+                    if self.nle.clips[new_idx].get("audio_tl_start") is not None:
+                        self.nle.clips[new_idx]["audio_tl_start"] = round(max(0.0, self._drag_orig_audio_tl_s + dt_sec), 3)
+                    self._drag_target = (kind, new_idx)
+                    self.selected_ref = (kind, new_idx)
+                    self._sync_selection_refs()
+                    self.redraw()
 
     def _on_release(self, event):
         act = self._drag_action
