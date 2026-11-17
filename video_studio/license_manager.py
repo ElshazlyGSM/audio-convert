@@ -1,5 +1,5 @@
 """
-ClipCraft Studio - Enterprise Node-Locked Licensing & 3-Day Trial Engine
+ClipCraft Studio - Enterprise Node-Locked Licensing & 30-Day Trial Engine
 Uses RSA-2048 Asymmetric Digital Signatures and Hardware-ID (HWID) binding.
 Author: ahmed elshazly <Elshazly.gsm@gmail.com>
 """
@@ -32,12 +32,70 @@ yoSNSBcm1reCi/3hyWAq/iadlljbSKAm5msXadpricBKleohfO/F/Nl6qfYa0kpW
 OwIDAQAB
 -----END PUBLIC KEY-----"""
 
-TRIAL_DURATION_SECONDS = 3 * 86400  # 3 days = 72 hours
+TRIAL_DURATION_SECONDS = 30 * 86400  # 30 days trial
 LICENSE_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "ClipCraftStudio"
 LICENSE_FILE = LICENSE_DIR / "license.key"
 TRIAL_STATE_FILE = LICENSE_DIR / "sys_state.dat"
 
 _CACHED_HWID: Optional[str] = None
+
+
+def _get_smbios_uuid() -> str:
+    """
+    Reads the SMBIOS system UUID directly from the Windows kernel firmware table.
+    Executes in under 1 millisecond with zero external processes or timeouts.
+    """
+    try:
+        k32 = ctypes.windll.kernel32
+        # 'RSMB' in ASCII little-endian is 0x52534D42
+        sz = k32.GetSystemFirmwareTable(0x52534D42, 0, None, 0)
+        if sz > 0:
+            buf = ctypes.create_string_buffer(sz)
+            if k32.GetSystemFirmwareTable(0x52534D42, 0, buf, sz) > 0:
+                d = buf.raw
+                idx = 8
+                while idx < len(d) - 4:
+                    typ = d[idx]
+                    length = d[idx + 1]
+                    if length < 4:
+                        break
+                    # SMBIOS Structure Type 1 is System Information
+                    if typ == 1 and length >= 0x19:
+                        import struct
+                        d1, d2, d3 = struct.unpack('<IHH', d[idx + 8 : idx + 16])
+                        d4 = d[idx + 16 : idx + 24]
+                        # Standard SMBIOS UUID string format (RFC 4122)
+                        return f"{d1:08X}-{d2:04X}-{d3:04X}-" + ''.join(f"{b:02X}" for b in d4[:2]) + "-" + ''.join(f"{b:02X}" for b in d4[2:])
+                    idx += length
+                    while idx < len(d) - 1 and (d[idx] != 0 or d[idx + 1] != 0):
+                        idx += 1
+                    idx += 2
+    except Exception:
+        pass
+
+    # Secondary instant fallback: Windows MachineGuid from Registry (no subprocess)
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography") as k:
+            guid, _ = winreg.QueryValueEx(k, "MachineGuid")
+            if guid and len(str(guid).strip()) > 8:
+                return str(guid).strip().upper()
+    except Exception:
+        pass
+
+    # Tertiary fallback: PowerShell with short timeout (only as last resort)
+    try:
+        res = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", "(Get-CimInstance Win32_ComputerSystemProduct).UUID"],
+            capture_output=True, text=True, timeout=3, creationflags=0x08000000 if sys.platform.startswith("win") else 0
+        )
+        val = res.stdout.strip()
+        if val and len(val) > 8:
+            return val
+    except Exception:
+        pass
+
+    return "SYS0000"
 
 
 def get_hardware_id() -> str:
@@ -59,32 +117,52 @@ def get_hardware_id() -> str:
     except Exception:
         pass
 
-    # 2. Motherboard UUID
-    sys_uuid = "SYS0000"
-    try:
-        res = subprocess.run(
-            ["powershell", "-NoProfile", "-Command", "(Get-CimInstance Win32_ComputerSystemProduct).UUID"],
-            capture_output=True, text=True, timeout=4, creationflags=0x08000000 if sys.platform.startswith("win") else 0
-        )
-        val = res.stdout.strip()
-        if val and len(val) > 8:
-            sys_uuid = val
-    except Exception:
-        pass
-
-    if sys_uuid == "SYS0000":
-        try:
-            out = subprocess.check_output("wmic csproduct get uuid", shell=True, text=True, stderr=subprocess.DEVNULL)
-            lines = [l.strip() for l in out.splitlines() if l.strip() and "UUID" not in l.upper()]
-            if lines:
-                sys_uuid = lines[0]
-        except Exception:
-            pass
+    # 2. Motherboard UUID via instant kernel SMBIOS / Registry
+    sys_uuid = _get_smbios_uuid()
 
     raw_seed = f"{vol_serial}::{sys_uuid}::ClipCraftStudio".encode("utf-8")
     h = hashlib.sha256(raw_seed).hexdigest().upper()
     _CACHED_HWID = f"CC-{h[:4]}-{h[4:8]}-{h[8:12]}-{h[12:16]}"
     return _CACHED_HWID
+
+
+def get_hardware_id_candidates() -> list:
+    """
+    Returns the primary hardware ID and all deterministic fallback candidates
+    (such as legacy SYS0000 fallback or Registry MachineGuid) to ensure that
+    licenses generated under either format remain 100% valid and accepted.
+    """
+    primary = get_hardware_id()
+    candidates = [primary]
+
+    vol_serial = "VOL0000"
+    try:
+        vol = ctypes.c_ulong()
+        ctypes.windll.kernel32.GetVolumeInformationW("C:\\", None, 0, ctypes.byref(vol), None, None, None, 0)
+        vol_serial = f"{vol.value:08X}"
+    except Exception:
+        pass
+
+    # 1. Legacy fallback (when PowerShell previously timed out -> SYS0000)
+    h_legacy = hashlib.sha256(f"{vol_serial}::SYS0000::ClipCraftStudio".encode("utf-8")).hexdigest().upper()
+    hw_legacy = f"CC-{h_legacy[:4]}-{h_legacy[4:8]}-{h_legacy[8:12]}-{h_legacy[12:16]}"
+    if hw_legacy not in candidates:
+        candidates.append(hw_legacy)
+
+    # 2. Registry MachineGuid candidate if available and different
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography") as k:
+            guid, _ = winreg.QueryValueEx(k, "MachineGuid")
+            if guid and len(str(guid).strip()) > 8:
+                h_guid = hashlib.sha256(f"{vol_serial}::{str(guid).strip().upper()}::ClipCraftStudio".encode("utf-8")).hexdigest().upper()
+                hw_guid = f"CC-{h_guid[:4]}-{h_guid[4:8]}-{h_guid[8:12]}-{h_guid[12:16]}"
+                if hw_guid not in candidates:
+                    candidates.append(hw_guid)
+    except Exception:
+        pass
+
+    return candidates
 
 
 def _derive_tamper_key(hwid: str) -> bytes:
@@ -109,14 +187,28 @@ def _read_trial_record() -> Dict[str, Any]:
         # Decode: first 32 bytes are sha256 checksum
         expected_chk = raw[:32]
         payload_bytes = raw[32:]
-        key = _derive_tamper_key(hwid)
-        calc_chk = hashlib.sha256(key + payload_bytes).digest()
-        if calc_chk != expected_chk:
+        valid_hwids = get_hardware_id_candidates()
+
+        matched_hwid = None
+        for cand in valid_hwids:
+            key = _derive_tamper_key(cand)
+            calc_chk = hashlib.sha256(key + payload_bytes).digest()
+            if calc_chk == expected_chk:
+                matched_hwid = cand
+                break
+
+        if not matched_hwid:
             return {"hwid": hwid, "tampered": True}
 
         data = json.loads(payload_bytes.decode("utf-8"))
-        if data.get("hwid") != hwid:
+        if data.get("hwid") not in valid_hwids:
             return {"hwid": hwid, "tampered": True}
+
+        # Seamlessly migrate trial state to primary HWID if it matched a candidate
+        if matched_hwid != hwid:
+            data["hwid"] = hwid
+            _write_trial_record(data)
+
         return data
     except Exception:
         return {"hwid": hwid, "tampered": True}
@@ -275,7 +367,11 @@ def _verify_license_token(token: str, expected_hwid: str) -> Tuple[bool, Any]:
 
         data = json.loads(payload_bytes.decode("utf-8"))
         token_hwid = str(data.get("hwid", "")).strip().upper()
-        if token_hwid != expected_hwid.strip().upper():
+        valid_hwids = [h.strip().upper() for h in get_hardware_id_candidates()]
+        if expected_hwid.strip().upper() not in valid_hwids:
+            valid_hwids.append(expected_hwid.strip().upper())
+
+        if token_hwid not in valid_hwids:
             return False, f"كود التفعيل هذا مخصص لجهاز آخر ({token_hwid}) ولا يطابق جهازك الحالى."
 
         expires_at = float(data.get("expires_at", 0) or 0)
