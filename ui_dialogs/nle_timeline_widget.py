@@ -20,6 +20,100 @@ from video_studio.transitions import DEFAULT_TRANSITIONS_CONFIG, get_transition_
 from video_studio.tooltip import add_tooltip
 
 
+class _CanvasTooltipHelper:
+    """Floating tooltip for canvas items based on hover coordinates with debounce."""
+
+    def __init__(self, canvas: tk.Canvas, is_ar_fn: Callable[[], bool]):
+        self.canvas = canvas
+        self.is_ar_fn = is_ar_fn
+        self._tip_window: Optional[tk.Toplevel] = None
+        self._after_id: Optional[str] = None
+        self._current_text: str = ""
+        self._last_x: int = 0
+        self._last_y: int = 0
+
+    def show(self, text_ar: str, text_en: str, root_x: int, root_y: int):
+        txt = text_ar if self.is_ar_fn() else (text_en or text_ar)
+        if not txt:
+            self.hide()
+            return
+        if txt == self._current_text and self._tip_window and self._tip_window.winfo_exists():
+            return
+        self._cancel()
+        self._current_text = txt
+        self._last_x = root_x
+        self._last_y = root_y
+        self._after_id = self.canvas.after(350, self._render_tip)
+
+    def _cancel(self):
+        if self._after_id:
+            try:
+                self.canvas.after_cancel(self._after_id)
+            except Exception:
+                pass
+            self._after_id = None
+
+    def _render_tip(self):
+        self._after_id = None
+        if not self.canvas.winfo_exists() or not self._current_text:
+            return
+        if self._tip_window:
+            try:
+                self._tip_window.destroy()
+            except Exception:
+                pass
+            self._tip_window = None
+
+        self._tip_window = tw = tk.Toplevel(self.canvas)
+        tw.wm_overrideredirect(True)
+        try:
+            tw.attributes("-topmost", True)
+        except Exception:
+            pass
+
+        card = tk.Frame(tw, bg="#388bfd", bd=1, relief="solid")
+        card.pack(fill="both", expand=True)
+
+        inner = tk.Frame(card, bg="#161b22", padx=8, pady=4)
+        inner.pack(fill="both", expand=True)
+
+        lbl = tk.Label(
+            inner,
+            text=self._current_text,
+            bg="#161b22",
+            fg="#f0f6fc",
+            font=("Segoe UI", 9),
+            justify="center",
+            wraplength=340,
+        )
+        lbl.pack()
+
+        tw.update_idletasks()
+        req_w = tw.winfo_reqwidth()
+        req_h = tw.winfo_reqheight()
+        sw = self.canvas.winfo_screenwidth()
+        sh = self.canvas.winfo_screenheight()
+
+        x = self._last_x + 12
+        y = self._last_y + 18
+        if x + req_w > sw - 12:
+            x = max(10, sw - req_w - 12)
+        if y + req_h > sh - 36:
+            y = max(10, self._last_y - req_h - 10)
+
+        tw.wm_geometry(f"+{int(x)}+{int(y)}")
+
+    def hide(self):
+        self._cancel()
+        self._current_text = ""
+        if self._tip_window:
+            try:
+                self._tip_window.destroy()
+            except Exception:
+                pass
+            self._tip_window = None
+
+
 class DaVinciTimelinePanel(ttk.Frame):
     HEADER_W = 144
     RULER_H = 24
@@ -208,8 +302,10 @@ class DaVinciTimelinePanel(ttk.Frame):
         # Dynamic Tracks & Vertical Scale
         self.btn_add_track = self._mk_bar_btn(bar, self._show_add_track_menu, bg="#1d3042", fg="#79c0ff")
         self.btn_compact_tracks = self._mk_bar_btn(bar, self.toggle_compact_tracks, bg="#232834", fg="#c9d1d9")
-        self._mk_small_zoom_btn(bar, "↕️-", lambda: self.step_track_height(-0.15)).pack(side="left", padx=1)
-        self._mk_small_zoom_btn(bar, "↕️+", lambda: self.step_track_height(0.15)).pack(side="left", padx=1)
+        self.btn_th_minus = self._mk_small_zoom_btn(bar, "↕️-", lambda: self.step_track_height(-0.15))
+        self.btn_th_minus.pack(side="left", padx=1)
+        self.btn_th_plus = self._mk_small_zoom_btn(bar, "↕️+", lambda: self.step_track_height(0.15))
+        self.btn_th_plus.pack(side="left", padx=1)
         self.lbl_track_h = tk.Label(bar, text="↕️ 100%", bg="#161920", fg="#8b949e", font=("Consolas", 8))
         self.lbl_track_h.pack(side="left", padx=(1, 3))
 
@@ -289,6 +385,8 @@ class DaVinciTimelinePanel(ttk.Frame):
         add_tooltip(self.btn_shortcuts, "دليل اختصارات الكيبورد والتحكم", "Keyboard Shortcuts Guide")
         add_tooltip(self.btn_add_track, "إضافة مسار إضافي جديد", "Add Timeline Track")
         add_tooltip(self.btn_compact_tracks, "تبديل وضع العرض المضغوط / الموسع للطبقات", "Toggle Compact / Expanded Tracks")
+        add_tooltip(self.btn_th_minus, "تصغير ارتفاع المسارات عمودياً", "Compact Track Height Vertically")
+        add_tooltip(self.btn_th_plus, "تكبير ارتفاع المسارات عمودياً", "Expand Track Height Vertically")
         add_tooltip(self.chk_ripple, "تفعيل/تعطيل الضم التلقائي للمقاطع عند الحذف (Ripple)", "Toggle Ripple Delete")
         add_tooltip(self.btn_add_txt, "إضافة نص جديد عند المؤشر", "Add Text at Playhead")
         add_tooltip(self.btn_add_ico, "إضافة أيقونة أو شارة عند المؤشر", "Add Icon at Playhead")
@@ -298,7 +396,10 @@ class DaVinciTimelinePanel(ttk.Frame):
         add_tooltip(self.btn_zoom_fit, "ملاءمة كامل التايم لاين لعرضه بالكامل داخل الشاشة", "Fit Entire Timeline to View")
         add_tooltip(self.btn_zoom_cut, "تكبير زوم فائق على موضع المؤشر للتدقيق", "Fine Zoom to Playhead / Cut")
 
-        self._mk_small_zoom_btn(bar, "➕", lambda: self.step_zoom(1.45)).pack(side="right", padx=1)
+        self.btn_zoom_in = self._mk_small_zoom_btn(bar, "➕", lambda: self.step_zoom(1.45))
+        self.btn_zoom_in.pack(side="right", padx=1)
+        add_tooltip(self.btn_zoom_in, "تكبير الخط الزمني (Zoom In)", "Zoom In Timeline")
+
         self.zoom_scale = ttk.Scale(
             bar,
             from_=0.0,
@@ -309,7 +410,12 @@ class DaVinciTimelinePanel(ttk.Frame):
             command=self._on_zoom_slider,
         )
         self.zoom_scale.pack(side="right", padx=2)
-        self._mk_small_zoom_btn(bar, "➖", lambda: self.step_zoom(1.0 / 1.45)).pack(side="right", padx=1)
+        add_tooltip(self.zoom_scale, "شريط تكبير وتصغير التايم لاين", "Timeline Zoom Slider")
+
+        self.btn_zoom_out = self._mk_small_zoom_btn(bar, "➖", lambda: self.step_zoom(1.0 / 1.45))
+        self.btn_zoom_out.pack(side="right", padx=1)
+        add_tooltip(self.btn_zoom_out, "تصغير الخط الزمني (Zoom Out)", "Zoom Out Timeline")
+
         self.lbl_zoom = tk.Label(bar, text="🔍 1x", bg="#161920", fg="#8b949e", font=("Consolas", 8))
         self.lbl_zoom.pack(side="right", padx=(3, 2))
 
@@ -322,6 +428,7 @@ class DaVinciTimelinePanel(ttk.Frame):
             highlightbackground="#2b313d",
         )
         self.canvas.grid(row=1, column=0, sticky="nsew")
+        self._canvas_tip = _CanvasTooltipHelper(self.canvas, self._is_ar)
 
         # ---------------- Row 2: Horizontal Scrollbar ----------------
         self.h_scroll = ttk.Scrollbar(self, orient="horizontal", command=self._on_hscroll)
@@ -554,26 +661,71 @@ class DaVinciTimelinePanel(ttk.Frame):
         self.show_hud_toast("🗑️ تم حذف الطبقة بنجاح" if ar else "🗑️ Layer deleted successfully")
 
     def move_track_up(self, track_key: str):
-        if track_key in ("V1", "A1", "A2"):
-            return
         idx = next((i for i, t in enumerate(self.track_specs) if t[0] == track_key), None)
         if idx is None or idx <= 0:
             return
         target_idx = idx - 1
         self.track_specs[idx], self.track_specs[target_idx] = self.track_specs[target_idx], self.track_specs[idx]
         self.redraw()
+        ar = self._is_ar()
+        tspec = self.track_specs[target_idx]
+        lbl = tspec[4] if ar else tspec[5]
+        self.show_hud_toast(f"⬆️ تم تحريك مسار ({lbl}) للأعلى" if ar else f"⬆️ Moved track ({lbl}) Up")
 
     def move_track_down(self, track_key: str):
-        if track_key in ("V1", "A1", "A2"):
-            return
         idx = next((i for i, t in enumerate(self.track_specs) if t[0] == track_key), None)
         if idx is None or idx >= len(self.track_specs) - 1:
-            return
-        if self.track_specs[idx + 1][0] in ("V1", "A1", "A2"):
             return
         target_idx = idx + 1
         self.track_specs[idx], self.track_specs[target_idx] = self.track_specs[target_idx], self.track_specs[idx]
         self.redraw()
+        ar = self._is_ar()
+        tspec = self.track_specs[target_idx]
+        lbl = tspec[4] if ar else tspec[5]
+        self.show_hud_toast(f"⬇️ تم تحريك مسار ({lbl}) للأسفل" if ar else f"⬇️ Moved track ({lbl}) Down")
+
+    def reset_default_track_order(self):
+        default_keys = [t[0] for t in self.DEFAULT_TRACK_SPECS]
+        existing_by_key = {t[0]: t for t in self.track_specs}
+        new_specs = []
+        for t in self.DEFAULT_TRACK_SPECS:
+            if t[0] in existing_by_key:
+                new_specs.append(existing_by_key[t[0]])
+            else:
+                new_specs.append(list(t))
+        for t in self.track_specs:
+            if t[0] not in default_keys:
+                new_specs.append(t)
+        self.track_specs = new_specs
+        self.redraw()
+        ar = self._is_ar()
+        self.show_hud_toast("🔄 تم إعادة الترتيب الافتراضي للمسارات" if ar else "🔄 Reset to default track order")
+
+    def _draw_reorder_indicator(self, cur_y: float, dest_tkey: Optional[str]):
+        self.canvas.delete("reorder_guide")
+        if not dest_tkey or dest_tkey == "RULER":
+            return
+        y0, y1 = self._track_y_bounds(dest_tkey)
+        line_y = y0 if cur_y < (y0 + y1) / 2 else y1
+        cw = max(self.canvas.winfo_width(), 800)
+        self.canvas.create_line(0, line_y, cw, line_y, fill="#00e5ff", width=3, tags="reorder_guide")
+
+    def _reorder_track_to(self, src_key: str, dest_key: str, drop_y: float = 0.0):
+        if src_key == dest_key or not src_key or not dest_key:
+            return
+        src_idx = next((i for i, t in enumerate(self.track_specs) if t[0] == src_key), None)
+        dest_idx = next((i for i, t in enumerate(self.track_specs) if t[0] == dest_key), None)
+        if src_idx is None or dest_idx is None:
+            return
+        y0, y1 = self._track_y_bounds(dest_key)
+        if drop_y > (y0 + y1) / 2 and dest_idx < src_idx:
+            dest_idx += 1
+        spec = self.track_specs.pop(src_idx)
+        self.track_specs.insert(dest_idx, spec)
+        self.redraw()
+        ar = self._is_ar()
+        lbl = spec[4] if ar else spec[5]
+        self.show_hud_toast(f"↕️ تم نقل مسار ({lbl}) بنجاح" if ar else f"↕️ Reordered track ({lbl}) successfully")
 
     def toggle_compact_tracks(self):
         if self.track_height_scale < 0.90:
@@ -604,7 +756,7 @@ class DaVinciTimelinePanel(ttk.Frame):
         self.redraw()
 
     def _sync_selection_refs(self):
-        self.selected_clip_indices = {idx for (kind, idx) in self.selected_items if kind == "clip"}
+        self.selected_clip_indices = {idx for (kind, idx) in self.selected_items if kind in ("clip", "V1_clip", "A1_clip")}
         if self.selected_items:
             if self.selected_ref not in self.selected_items:
                 self.selected_ref = next(iter(self.selected_items))
@@ -1027,7 +1179,7 @@ class DaVinciTimelinePanel(ttk.Frame):
         new_targets = set()
         # Duplicate overlay items
         for kind, idx in sorted(targets, key=lambda x: (x[0], -x[1])):
-            if kind != "clip":
+            if kind not in ("clip", "V1_clip", "A1_clip"):
                 t_list = self.nle.get_track_list(kind)
                 if 0 <= idx < len(t_list):
                     orig = t_list[idx]
@@ -1047,7 +1199,7 @@ class DaVinciTimelinePanel(ttk.Frame):
             else:
                 new_i = self.nle.duplicate_clip(idx)
                 if new_i is not None:
-                    new_targets.add(("clip", new_i))
+                    new_targets.add((kind, new_i))
 
         if new_targets:
             self.selected_items = new_targets
@@ -1063,12 +1215,12 @@ class DaVinciTimelinePanel(ttk.Frame):
             return
         items = []
         for kind, idx in sorted(targets, key=lambda x: (x[0], x[1])):
-            if kind == "clip":
+            if kind in ("clip", "V1_clip", "A1_clip"):
                 if 0 <= idx < len(self.nle.clips):
                     c = copy.deepcopy(self.nle.clips[idx])
                     s = float(c.get("tl_start", 0.0))
                     e = float(c.get("tl_end", s + 1.0))
-                    items.append({"kind": "clip", "orig_idx": idx, "start": s, "end": e, "data": c})
+                    items.append({"kind": kind, "orig_idx": idx, "start": s, "end": e, "data": c})
             else:
                 t_list = self.nle.get_track_list(kind)
                 if 0 <= idx < len(t_list):
@@ -1091,7 +1243,7 @@ class DaVinciTimelinePanel(ttk.Frame):
             return
         # Check locked tracks
         v1_locked = bool(hasattr(self.nle, "is_track_locked") and self.nle.is_track_locked("V1"))
-        valid_items = [it for it in self._clipboard_items if not (it["kind"] == "clip" and v1_locked) and not (it["kind"] != "clip" and hasattr(self.nle, "is_track_locked") and self.nle.is_track_locked(it["kind"]))]
+        valid_items = [it for it in self._clipboard_items if not (it["kind"] in ("clip", "V1_clip", "A1_clip") and v1_locked) and not (it["kind"] not in ("clip", "V1_clip", "A1_clip") and hasattr(self.nle, "is_track_locked") and self.nle.is_track_locked(it["kind"]))]
         if not valid_items:
             self.show_hud_toast("🔒 لا يمكن اللصق: كافة المسارات المستهدفة مقفولة" if self._is_ar() else "🔒 Cannot paste: destination tracks are locked")
             return
@@ -1101,7 +1253,7 @@ class DaVinciTimelinePanel(ttk.Frame):
         new_targets = set()
 
         # 1. Paste clips (if V1 not locked)
-        clip_copies = [it for it in self._clipboard_items if it["kind"] == "clip"] if not v1_locked else []
+        clip_copies = [it for it in self._clipboard_items if it["kind"] in ("clip", "V1_clip", "A1_clip")] if not v1_locked else []
         for it in clip_copies:
             c_data = copy.deepcopy(it["data"])
             c_data["id"] = self.nle.next_id("clip") if hasattr(self.nle, "next_id") else f"c_{len(self.nle.clips) + 1}"
@@ -1144,7 +1296,7 @@ class DaVinciTimelinePanel(ttk.Frame):
         # 2. Paste overlay items (skip locked tracks)
         for it in self._clipboard_items:
             kind = it["kind"]
-            if kind == "clip" or (hasattr(self.nle, "is_track_locked") and self.nle.is_track_locked(kind)):
+            if kind in ("clip", "V1_clip", "A1_clip") or (hasattr(self.nle, "is_track_locked") and self.nle.is_track_locked(kind)):
                 continue
             data = copy.deepcopy(it["data"])
             data["id"] = self.nle.next_id(kind.lower()) if hasattr(self.nle, "next_id") else f"{kind}_{len(self.nle.get_track_list(kind)) + 1}"
@@ -1714,8 +1866,8 @@ class DaVinciTimelinePanel(ttk.Frame):
 
             dx0 = max(self.HEADER_W, x0)
             dx1 = min(cw, x1)
-            is_v_sel = (self.selected_ref in (("clip", idx), ("V1_clip", idx))) or (idx in getattr(self, "selected_clip_indices", set())) or (("clip", idx) in getattr(self, "selected_items", set())) or (("V1_clip", idx) in getattr(self, "selected_items", set()))
-            is_a_sel = (self.selected_ref in (("clip", idx), ("A1_clip", idx))) or (idx in getattr(self, "selected_clip_indices", set())) or (("clip", idx) in getattr(self, "selected_items", set())) or (("A1_clip", idx) in getattr(self, "selected_items", set()))
+            is_v_sel = (self.selected_ref in (("clip", idx), ("V1_clip", idx))) or (("clip", idx) in getattr(self, "selected_items", set())) or (("V1_clip", idx) in getattr(self, "selected_items", set()))
+            is_a_sel = (self.selected_ref in (("clip", idx), ("A1_clip", idx))) or (("clip", idx) in getattr(self, "selected_items", set())) or (("A1_clip", idx) in getattr(self, "selected_items", set()))
             is_sil_clip = str(clip.get("name", "")).startswith("🔇")
             is_compound = bool(clip.get("sub_clips"))
             v_out_c = "#ffd700" if is_v_sel else "#11141a"
@@ -2011,7 +2163,7 @@ class DaVinciTimelinePanel(ttk.Frame):
     def _hit_test(self, mx: float, my: float) -> Tuple[Optional[Tuple[str, int]], str]:
         # 1. Overlay tracks (V4, V3, V2, and extra tracks)
         for kind, idx, x0, y0, x1, y1 in reversed(self._item_hit_boxes):
-            if kind != "clip" and y0 <= my <= y1 and (x0 - 5) <= mx <= (x1 + 5):
+            if kind not in ("clip", "V1_clip", "A1_clip") and y0 <= my <= y1 and (x0 - 5) <= mx <= (x1 + 5):
                 if (x1 - x0) >= 12:
                     if abs(mx - x0) <= 7:
                         return (kind, idx), "left"
@@ -2107,7 +2259,7 @@ class DaVinciTimelinePanel(ttk.Frame):
         if not target or not isinstance(target, tuple):
             return False
         kind, _ = target
-        tkey = "V1" if kind == "clip" else kind
+        tkey = "V1" if kind in ("clip", "V1_clip") else ("A1" if kind == "A1_clip" else kind)
         return bool(hasattr(self.nle, "is_track_locked") and self.nle.is_track_locked(tkey))
 
     def _handle_header_click(self, event, tkey: str):
@@ -2178,16 +2330,36 @@ class DaVinciTimelinePanel(ttk.Frame):
 
     def _on_press(self, event):
         self.canvas.focus_set()
+        if hasattr(self, "_canvas_tip"):
+            self._canvas_tip.hide()
         mx, my = event.x, event.y
         self._drag_moved = False
         self._undo_pushed_for_drag = False
         self._snap_guide_sec = None
 
-        # 1. Left Track Headers (Visibility/Mute or Per-Track [+] Add Button)
+        # 1. Left Track Headers (Visibility/Mute, Lock, [+] Button, or Drag Reorder)
         if mx < self.HEADER_W:
             tkey = self._y_to_track(my)
             if tkey and tkey != "RULER":
-                self._handle_header_click(event, tkey)
+                if 6 <= mx <= 35:
+                    self._toggle_track_visibility(tkey)
+                elif self.HEADER_W - 45 <= mx < self.HEADER_W - 23:
+                    new_locked = self.nle.toggle_track_lock(tkey)
+                    self.on_modified()
+                    self.redraw()
+                    ar = self._is_ar()
+                    if new_locked:
+                        self.show_hud_toast("🔒 تم قفل المسار لمنع التعديل والقص" if ar else "🔒 Track locked against edits & cuts")
+                    else:
+                        self.show_hud_toast("🔓 تم إلغاء قفل المسار" if ar else "🔓 Track unlocked")
+                elif mx >= self.HEADER_W - 23:
+                    self._handle_header_click(event, tkey)
+                else:
+                    self._drag_action = "reorder_track"
+                    self._drag_track_key = tkey
+                    self._drag_start_y = my
+                    self._drag_start_x = mx
+                    self.canvas.configure(cursor="sb_v_double_arrow")
             return
 
         tot_dur = max(0.3, self.nle.total_duration)
@@ -2238,10 +2410,10 @@ class DaVinciTimelinePanel(ttk.Frame):
             if hit_ref and self._is_item_track_locked(hit_ref):
                 self.show_hud_toast("🔒 المسار مقفول ضد القص (قم بإلغاء القفل أولاً)" if ar else "🔒 Track is locked against cutting")
                 return
-            if (not hit_ref or hit_ref[0] == "clip") and self.nle.is_track_locked("V1"):
+            if (not hit_ref or hit_ref[0] in ("clip", "V1_clip", "A1_clip")) and self.nle.is_track_locked("V1"):
                 self.show_hud_toast("🔒 مسار الفيديو الرئيسي مقفول ضد القص" if ar else "🔒 Video track is locked against cutting")
                 return
-            if hit_ref and hit_ref[0] != "clip":
+            if hit_ref and hit_ref[0] not in ("clip", "V1_clip", "A1_clip"):
                 new_i = self.nle.split_overlay_at(hit_ref[0], hit_ref[1], sec)
                 if new_i is not None:
                     self.selected_ref = (hit_ref[0], new_i)
@@ -2251,7 +2423,8 @@ class DaVinciTimelinePanel(ttk.Frame):
             else:
                 new_c = self.nle.split_clip_at(sec)
                 if new_c is not None:
-                    self.selected_ref = ("clip", new_c)
+                    target_kind = hit_ref[0] if (hit_ref and hit_ref[0] in ("V1_clip", "A1_clip")) else "clip"
+                    self.selected_ref = (target_kind, new_c)
                     self.selected_items = {self.selected_ref}
                     self.on_select(self.selected_ref)
                     self.on_modified()
@@ -2281,7 +2454,7 @@ class DaVinciTimelinePanel(ttk.Frame):
             # Record origins for multi-drag
             self._drag_multi_origins.clear()
             for sel_k, sel_i in self.selected_items:
-                if sel_k == "clip":
+                if sel_k in ("clip", "V1_clip", "A1_clip"):
                     if 0 <= sel_i < len(self.nle.clips):
                         self._drag_multi_origins[(sel_k, sel_i)] = float(self.nle.clips[sel_i]["tl_start"])
                 else:
@@ -2296,7 +2469,7 @@ class DaVinciTimelinePanel(ttk.Frame):
             if has_locked:
                 self._drag_action = "locked"
             elif len(self.selected_items) == 1:
-                if kind != "clip":
+                if kind not in ("clip", "V1_clip", "A1_clip"):
                     it = self.nle.get_track_list(kind)[idx]
                     s0 = 0.0 if it.get("full_duration") else float(it.get("start_sec", 0.0))
                     e0 = tot_dur if it.get("full_duration") else float(it.get("end_sec", tot_dur))
@@ -2334,6 +2507,7 @@ class DaVinciTimelinePanel(ttk.Frame):
             self._marquee_start_x = mx
             self._marquee_start_y = my
             self._drag_start_x = mx
+            sec = self._x_to_sec(max(self.HEADER_W, mx))
             self.redraw()
             self.on_scrub(sec, False)
 
@@ -2345,8 +2519,13 @@ class DaVinciTimelinePanel(ttk.Frame):
             return
         mx = event.x
         dx_px = mx - self._drag_start_x
-        if abs(dx_px) > 3:
+        if abs(dx_px) > 3 or abs(event.y - getattr(self, "_drag_start_y", event.y)) > 3:
             self._drag_moved = True
+
+        if self._drag_action == "reorder_track":
+            dest_tkey = self._y_to_track(event.y)
+            self._draw_reorder_indicator(event.y, dest_tkey)
+            return
 
         if self._drag_action == "marquee":
             c = self.canvas
@@ -2391,7 +2570,7 @@ class DaVinciTimelinePanel(ttk.Frame):
                 self.nle.push_undo()
                 self._undo_pushed_for_drag = True
             for sel_k, sel_i in self.selected_items:
-                if sel_k == "clip":
+                if sel_k in ("clip", "V1_clip", "A1_clip"):
                     if 0 <= sel_i < len(self.nle.clips):
                         orig_tl = self._drag_multi_origins.get((sel_k, sel_i), float(self.nle.clips[sel_i]["tl_start"]))
                         self.nle.clips[sel_i]["tl_start"] = round(max(0.0, orig_tl + dt_sec), 3)
@@ -2415,7 +2594,7 @@ class DaVinciTimelinePanel(ttk.Frame):
             return
         kind, idx = self._drag_target
 
-        if kind != "clip":
+        if kind not in ("clip", "V1_clip", "A1_clip"):
             t_list = self.nle.get_track_list(kind)
             if not (0 <= idx < len(t_list)):
                 return
@@ -2458,7 +2637,7 @@ class DaVinciTimelinePanel(ttk.Frame):
 
             self.redraw()
 
-        elif kind == "clip" and 0 <= idx < len(self.nle.clips):
+        elif kind in ("clip", "V1_clip", "A1_clip") and 0 <= idx < len(self.nle.clips):
             cl = self.nle.clips[idx]
             spd = max(0.25, float(cl.get("speed", 1.0)))
             src_max = max(1.0, float(self.nle.source_duration or self._drag_ref_tot_dur))
@@ -2494,11 +2673,11 @@ class DaVinciTimelinePanel(ttk.Frame):
                     self.nle.push_undo()
                     self._undo_pushed_for_drag = True
                 raw_tl_s = max(0.0, self._drag_orig_tl_s + dt_sec)
-                snapped_tl_s, guide = self._snap_time(raw_tl_s, ignore_ref=("clip", idx))
+                snapped_tl_s, guide = self._snap_time(raw_tl_s, ignore_ref=(kind, idx))
                 self._snap_guide_sec = guide
                 new_idx = self.nle.move_clip_to_time(idx, snapped_tl_s, push_undo=False)
-                self._drag_target = ("clip", new_idx)
-                self.selected_ref = ("clip", new_idx)
+                self._drag_target = (kind, new_idx)
+                self.selected_ref = (kind, new_idx)
                 self._sync_selection_refs()
                 self.redraw()
 
@@ -2507,7 +2686,15 @@ class DaVinciTimelinePanel(ttk.Frame):
         self._drag_action = None
         self._snap_guide_sec = None
 
-        if act == "marquee":
+        if act == "reorder_track":
+            self.canvas.delete("reorder_guide")
+            self.canvas.configure(cursor="arrow")
+            if self._drag_moved:
+                dest_tkey = self._y_to_track(event.y)
+                if dest_tkey and dest_tkey != "RULER":
+                    self._reorder_track_to(self._drag_track_key, dest_tkey, event.y)
+            return
+        elif act == "marquee":
             self.canvas.delete("marquee_box")
             if not self._drag_moved:
                 sec = self._x_to_sec(max(self.HEADER_W, event.x))
@@ -2533,6 +2720,8 @@ class DaVinciTimelinePanel(ttk.Frame):
             self.playhead_sec = sec
             self.redraw()
             self.on_scrub(sec, True)
+            if self.selected_ref:
+                self.on_select(self.selected_ref)
         elif act:
             self.on_modified()
             if self.selected_ref:
@@ -2541,18 +2730,105 @@ class DaVinciTimelinePanel(ttk.Frame):
 
     def _on_hover(self, event):
         mx, my = event.x, event.y
+        ar = self._is_ar()
+        tip = getattr(self, "_canvas_tip", None)
+
+        # 1. Left Track Headers Area
         if mx < self.HEADER_W:
-            self.canvas.configure(cursor="hand2")
             if self._hover_blade_sec is not None:
                 self._hover_blade_sec = None
                 if not self._update_blade_preview_fast():
                     self.redraw()
+            tkey = self._y_to_track(my)
+            if not tkey or tkey == "RULER":
+                self.canvas.configure(cursor="arrow")
+                if tip:
+                    tip.hide()
+                return
+
+            tspec = next((t for t in self.track_specs if t[0] == tkey), None)
+            lbl = (tspec[4] if ar else tspec[5]) if tspec else tkey
+            en = self.nle.track_enabled.get(tkey, True)
+            is_locked = bool(hasattr(self.nle, "is_track_locked") and self.nle.is_track_locked(tkey))
+
+            if 6 <= mx <= 35:
+                # Eye / Mute toggle
+                self.canvas.configure(cursor="hand2")
+                if tkey == "A1":
+                    txt_ar = "🔊 انقر لكتم صوت الفيديو الأصلي (A1)" if en else "🔇 انقر لتفعيل وتشغيل صوت الفيديو الأصلي (A1)"
+                    txt_en = "🔊 Click to Mute Original Audio (A1)" if en else "🔇 Click to Unmute Original Audio (A1)"
+                elif tkey in ("A2", "AUD") or tkey.startswith("AUD"):
+                    txt_ar = f"🔊 انقر لكتم مسار الصوت ({lbl})" if en else f"🔇 انقر لتفعيل مسار الصوت ({lbl})"
+                    txt_en = f"🔊 Click to Mute Audio Track ({lbl})" if en else f"🔇 Click to Unmute Audio Track ({lbl})"
+                elif tkey == "V1":
+                    txt_ar = "👁️ انقر لإخفاء مسار الفيديو (V1)" if en else "🚫 انقر لإظهار مسار الفيديو (V1)"
+                    txt_en = "👁️ Click to Hide Video Track (V1)" if en else "🚫 Click to Show Video Track (V1)"
+                else:
+                    txt_ar = f"👁️ انقر لإخفاء طبقة ({lbl})" if en else f"🚫 انقر لإظهار طبقة ({lbl})"
+                    txt_en = f"👁️ Click to Hide Track ({lbl})" if en else f"🚫 Click to Show Track ({lbl})"
+                if tip:
+                    tip.show(txt_ar, txt_en, event.x_root, event.y_root)
+            elif self.HEADER_W - 45 <= mx < self.HEADER_W - 23:
+                # Lock toggle
+                self.canvas.configure(cursor="hand2")
+                txt_ar = f"🔒 مسار ({lbl}) مقفول ضد التعديل والقص\n💡 انقر لإلغاء القفل" if is_locked else f"🔓 مسار ({lbl}) مفتوح للتعديل\n💡 انقر لقفل المسار لمنع التعديل والقص بالخطأ"
+                txt_en = f"🔒 Track ({lbl}) is Locked against edits\n💡 Click to unlock" if is_locked else f"🔓 Track ({lbl}) is Unlocked\n💡 Click to lock track"
+                if tip:
+                    tip.show(txt_ar, txt_en, event.x_root, event.y_root)
+            elif mx >= self.HEADER_W - 23:
+                # Action [+] button
+                self.canvas.configure(cursor="hand2")
+                if tkey == "V1":
+                    txt_ar = "✂️ تقسيم الفيديو عند المؤشر (Ctrl+B)"
+                    txt_en = "✂️ Split video at playhead (Ctrl+B)"
+                elif tkey == "A1":
+                    txt_ar = "🔇 كتم المقاطع الصامتة تلقائياً أو تقسيم مسار الصوت"
+                    txt_en = "🔇 Auto-mute silence or split audio"
+                elif tkey == "A2" or tkey.startswith("AUD"):
+                    txt_ar = "🎵 إضافة ملف صوتي جديد (موسيقى / مؤثرات)"
+                    txt_en = "🎵 Add new audio file (music / SFX)"
+                elif tkey == "V2" or tkey.startswith("MED"):
+                    txt_ar = "⭐ إضافة أيقونة أو شارة أو صورة خارجية عند المؤشر"
+                    txt_en = "⭐ Add icon badge or image at playhead"
+                elif tkey == "V3" or tkey.startswith("TXT"):
+                    txt_ar = "📝 إضافة نص أو ترجمة متحركة عند المؤشر"
+                    txt_en = "📝 Add animated text or subtitle at playhead"
+                elif tkey == "V4" or tkey.startswith("LOG"):
+                    txt_ar = "🛡️ إضافة شعار أو علامة مائية عند المؤشر"
+                    txt_en = "🛡️ Add logo or watermark at playhead"
+                else:
+                    txt_ar = f"➕ إضافة عنصر جديد إلى مسار ({lbl})"
+                    txt_en = f"➕ Add item to track ({lbl})"
+                if tip:
+                    tip.show(txt_ar, txt_en, event.x_root, event.y_root)
+            else:
+                # Track header label (reorder drag handle)
+                self.canvas.configure(cursor="sb_v_double_arrow")
+                txt_ar = f"↕️ اضغط واسحب للأعلى أو للأسفل لتغيير ترتيب مسار ({lbl})\n💡 أو انقر بزر الفأرة الأيمن لخيارات الطبقة"
+                txt_en = f"↕️ Click and Drag Up/Down to reorder track ({lbl})\n💡 Or Right-click for track options"
+                if tip:
+                    tip.show(txt_ar, txt_en, event.x_root, event.y_root)
             return
+
+        # 2. Ruler or Playhead Area
+        tot_dur = max(0.3, self.nle.total_duration)
+        _vw, tot_px = self._viewport_metrics()
+        px = self._sec_to_x(self.playhead_sec, tot_dur, tot_px)
 
         if my <= self.RULER_H:
             self.canvas.configure(cursor="hand2")
+            if abs(mx - px) <= 9:
+                txt_ar = f"🔴 مؤشر التشغيل (Playhead: {self._fmt_tc(self.playhead_sec, 'hundredth')})\n💡 اسحب للتمرير والتحرك الدقيق عبر الفيديو"
+                txt_en = f"🔴 Playhead ({self._fmt_tc(self.playhead_sec, 'hundredth')})\n💡 Drag to scrub precisely"
+            else:
+                cur_s = self._x_to_sec(mx)
+                txt_ar = f"⏱️ المسطرة الزمنية ({self._fmt_tc(cur_s, 'tenth')})\n💡 انقر للتنقل السريع للمؤشر، أو اسحب للمسح"
+                txt_en = f"⏱️ Timeline Ruler ({self._fmt_tc(cur_s, 'tenth')})\n💡 Click or scrub playhead"
+            if tip:
+                tip.show(txt_ar, txt_en, event.x_root, event.y_root)
             return
 
+        # 3. Transition Placement Tool Mode
         if self.tool_mode == "transition_place":
             self.canvas.configure(cursor="hand2")
             cut_idx = self._find_nearest_cut_seam(mx, my, tolerance_px=28.0)
@@ -2568,30 +2844,114 @@ class DaVinciTimelinePanel(ttk.Frame):
                         break
                 if cut_x is not None:
                     lid = c.create_line(cut_x, self.RULER_H, cut_x, a1_y1, fill="#00e5ff", width=2)
-                    lbl_txt = f"🪄 انقر لوضع الانتقال على القطع #{cut_idx+1}" if self._is_ar() else f"🪄 Click to Place on Cut #{cut_idx+1}"
+                    lbl_txt = f"🪄 انقر لوضع الانتقال على القطع #{cut_idx+1}" if ar else f"🪄 Click to Place on Cut #{cut_idx+1}"
                     bid = c.create_rectangle(cut_x - 72, v1_y0 + 6, cut_x + 72, v1_y0 + 26, fill="#0d2d1f", outline="#00e5ff", width=2)
                     tid = c.create_text(cut_x, v1_y0 + 16, text=lbl_txt, fill="#b7f5cb", font=("Segoe UI", 8, "bold"))
                     self._trans_guide_ids.extend([lid, bid, tid])
+                if tip:
+                    tip.show(f"🪄 انقر لوضع الانتقال المختار على القطع #{cut_idx+1}", f"🪄 Click to place transition on cut #{cut_idx+1}", event.x_root, event.y_root)
+            elif tip:
+                tip.hide()
             return
 
+        # 4. Blade / Razor Mode
         if self.tool_mode == "blade":
             self.canvas.configure(cursor="crosshair")
-            self._hover_blade_sec = self._x_to_sec(mx)
+            sec = self._x_to_sec(mx)
+            self._hover_blade_sec = sec
             if not self._update_blade_preview_fast():
                 self.redraw()
+            if tip:
+                tip.show(f"✂️ شفرة القص الدقيق ({self._fmt_tc(sec, 'hundredth')})\n💡 انقر لقص وتقسيم المقطع هنا فوراً", f"✂️ Razor Blade Tool ({self._fmt_tc(sec, 'hundredth')})\n💡 Click to split clip at this exact frame", event.x_root, event.y_root)
             return
 
+        # 5. Check Cut Seams
+        cut_hit = self._hit_test_cut_seam(mx, my, tol=14.0)
+        if cut_hit is not None:
+            self.canvas.configure(cursor="hand2")
+            cut_idx, _kx, has_trans, t_key, t_dur = cut_hit
+            if has_trans:
+                t_info = get_transition_info(t_key)
+                t_lbl = t_info.get("label_ar") if ar else t_info.get("label_en")
+                txt_ar = f"✨ انتقال سينمائي ({t_lbl} - {t_dur:.2f}s) على القطع #{cut_idx+1}\n💡 انقر بزر الفأرة الأيمن لتغيير الانتقال أو إزالته"
+                txt_en = f"✨ Transition ({t_lbl} - {t_dur:.2f}s) on Cut #{cut_idx+1}\n💡 Right-click to edit or remove"
+            else:
+                txt_ar = f"✂️ فاصل قطع بين المقاطع #{cut_idx+1}\n💡 انقر بزر الفأرة الأيمن لإضافة انتقال أو اسحب انتقالاً إليه"
+                txt_en = f"✂️ Cut seam between clips #{cut_idx+1}\n💡 Right-click to add transition or drag one here"
+            if tip:
+                tip.show(txt_ar, txt_en, event.x_root, event.y_root)
+            return
 
+        # 6. Check Clips and Overlay Items
         hit_ref, part = self._hit_test(mx, my)
         if hit_ref:
+            kind, idx = hit_ref
             if part in ("left", "right"):
                 self.canvas.configure(cursor="sb_h_double_arrow")
+                if part == "left":
+                    txt_ar = "↔️ تقليم بداية المقطع (Trim In)\n💡 اضغط واسحب لتغيير بداية المقطع"
+                    txt_en = "↔️ Trim Clip Start (Trim In)\n💡 Drag to trim in-point"
+                else:
+                    txt_ar = "↔️ تقليم نهاية المقطع (Trim Out)\n💡 اضغط واسحب لتغيير نهاية المقطع"
+                    txt_en = "↔️ Trim Clip End (Trim Out)\n💡 Drag to trim out-point"
+                if tip:
+                    tip.show(txt_ar, txt_en, event.x_root, event.y_root)
+                return
+
+            self.canvas.configure(cursor="fleur")
+            if kind in ("clip", "V1_clip", "A1_clip"):
+                cl = self.nle.clips[idx] if (0 <= idx < len(self.nle.clips)) else None
+                if cl:
+                    tl_s = float(cl.get("tl_start", 0.0))
+                    tl_e = float(cl.get("tl_end", tl_s + 1.0))
+                    dur = max(0.0, tl_e - tl_s)
+                    spd = float(cl.get("speed", 1.0))
+                    spd_txt = f" | السرعة: {spd:.2g}x" if abs(spd - 1.0) > 0.02 else ""
+                    c_name = cl.get("name", f"Clip #{idx+1}")
+                    if kind == "V1_clip":
+                        txt_ar = f"🎬 مسار الفيديو الرئيسي V1: {c_name}\n⏱️ البداية: {tl_s:.2f}s | المدة: {dur:.2f}s{spd_txt}\n💡 انقر لتعديل أبعاد أو ألوان الفيديو، أو اسحب للتحريك"
+                        txt_en = f"🎬 Video Track V1: {c_name}\n⏱️ Start: {tl_s:.2f}s | Dur: {dur:.2f}s{spd_txt}\n💡 Click to edit crop/color/speed, or drag to move"
+                    elif kind == "A1_clip":
+                        txt_ar = f"🔊 مسار صوت الفيديو الأصلي A1: {c_name}\n⏱️ البداية: {tl_s:.2f}s | المدة: {dur:.2f}s\n💡 انقر لتعديل الصوت والمؤثرات أو الكتم، أو اسحب للتحريك"
+                        txt_en = f"🔊 Video Original Audio A1: {c_name}\n⏱️ Start: {tl_s:.2f}s | Dur: {dur:.2f}s\n💡 Click to edit volume/EQ or mute, or drag to move"
+                    else:
+                        txt_ar = f"🎬 مقطع فيديو وصوت مرتبطين: {c_name}\n⏱️ البداية: {tl_s:.2f}s | المدة: {dur:.2f}s{spd_txt}\n💡 انقر للتحديد والتعديل، أو افصل الصوت بزر التثبيت بالأعلى"
+                        txt_en = f"🎬 Linked Video & Audio Clip: {c_name}\n⏱️ Start: {tl_s:.2f}s | Dur: {dur:.2f}s{spd_txt}\n💡 Click to select, or unlink via toolbar button"
+                    if tip:
+                        tip.show(txt_ar, txt_en, event.x_root, event.y_root)
+                    return
             else:
-                self.canvas.configure(cursor="fleur")
-        else:
-            self.canvas.configure(cursor="arrow")
+                t_list = self.nle.get_track_list(kind)
+                it = t_list[idx] if (0 <= idx < len(t_list)) else None
+                if it:
+                    lbl = self._overlay_display_label(kind, it, ar)
+                    is_full = bool(it.get("full_duration", False))
+                    dur_lbl = ("كامل مدة الفيديو (∞)" if ar else "Full Duration (∞)") if is_full else f"{float(it.get('start_sec', 0.0)):.2f}s → {float(it.get('end_sec', 0.0)):.2f}s"
+                    txt_ar = f"📌 {lbl}\n⏱️ التوقيت: {dur_lbl}\n💡 انقر للتحديد والتعديل، أو اسحب للتحريك والتقليم"
+                    txt_en = f"📌 {lbl}\n⏱️ Timing: {dur_lbl}\n💡 Click to select/edit, or drag to move/trim"
+                    if tip:
+                        tip.show(txt_ar, txt_en, event.x_root, event.y_root)
+                    return
+
+        # 7. Check Gaps
+        for gs, ge, gx0, gx1 in self._gap_hit_boxes:
+            if gx0 <= mx <= gx1:
+                self.canvas.configure(cursor="hand2")
+                g_dur = ge - gs
+                txt_ar = f"↔️ فجوة زمنية فارغة ({g_dur:.2f}s)\n💡 انقر بزر الفأرة الأيمن لحذف الفجوة وتقريب المقاطع (Ripple Delete)"
+                txt_en = f"↔️ Empty Gap ({g_dur:.2f}s)\n💡 Right-click to ripple delete this gap"
+                if tip:
+                    tip.show(txt_ar, txt_en, event.x_root, event.y_root)
+                return
+
+        # 8. Empty Timeline Canvas Space
+        self.canvas.configure(cursor="arrow")
+        if tip:
+            tip.hide()
 
     def _on_leave(self, _e):
+        if hasattr(self, "_canvas_tip"):
+            self._canvas_tip.hide()
         self._clear_trans_guides()
         if self._hover_blade_sec is not None:
             self._hover_blade_sec = None
@@ -2635,6 +2995,10 @@ class DaVinciTimelinePanel(ttk.Frame):
             menu.add_command(
                 label="⬇️ " + ("تحريك الطبقة لأسفل" if ar else "Move Track Down"),
                 command=lambda: self.move_track_down(tkey),
+            )
+            menu.add_command(
+                label="🔄 " + ("إعادة الترتيب الافتراضي للمسارات" if ar else "Reset Default Track Order"),
+                command=self.reset_default_track_order,
             )
             if tkey not in ("V1", "A1"):
                 menu.add_separator()

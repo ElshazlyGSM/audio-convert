@@ -109,9 +109,9 @@ class MasterExportMixin:
     def export_selected_clip_only(self, clip_idx=None):
         if clip_idx is None:
             sel = getattr(self, "player_canvas_selected", None)
-            if isinstance(sel, tuple) and sel[0] == "clip":
+            if isinstance(sel, tuple) and sel[0] in ("clip", "V1_clip", "A1_clip"):
                 clip_idx = sel[1]
-            elif hasattr(self, "davinci_timeline") and self.davinci_timeline.selected_ref and self.davinci_timeline.selected_ref[0] == "clip":
+            elif hasattr(self, "davinci_timeline") and self.davinci_timeline.selected_ref and self.davinci_timeline.selected_ref[0] in ("clip", "V1_clip", "A1_clip"):
                 clip_idx = self.davinci_timeline.selected_ref[1]
             else:
                 clip_idx = 0
@@ -196,9 +196,9 @@ class MasterExportMixin:
         selected_clip_idx = None
         if has_nle:
             sel_ref = getattr(self, "player_canvas_selected", None)
-            if isinstance(sel_ref, tuple) and sel_ref[0] == "clip":
+            if isinstance(sel_ref, tuple) and sel_ref[0] in ("clip", "V1_clip", "A1_clip"):
                 selected_clip_idx = sel_ref[1]
-            elif hasattr(self, "davinci_timeline") and self.davinci_timeline.selected_ref and self.davinci_timeline.selected_ref[0] == "clip":
+            elif hasattr(self, "davinci_timeline") and self.davinci_timeline.selected_ref and self.davinci_timeline.selected_ref[0] in ("clip", "V1_clip", "A1_clip"):
                 selected_clip_idx = self.davinci_timeline.selected_ref[1]
 
         clip_count = len(self.nle_project.clips) if has_nle else 1
@@ -476,12 +476,12 @@ class MasterExportMixin:
         selected_clip_idx = None
         if has_nle and not is_batch_separate:
             sel_ref = getattr(self, "player_canvas_selected", None)
-            if isinstance(sel_ref, tuple) and sel_ref[0] == "clip":
+            if isinstance(sel_ref, tuple) and sel_ref[0] in ("clip", "V1_clip", "A1_clip"):
                 c_idx = sel_ref[1]
                 if 0 <= c_idx < len(self.nle_project.clips):
                     selected_clip = self.nle_project.clips[c_idx]
                     selected_clip_idx = c_idx
-            elif hasattr(self, "davinci_timeline") and self.davinci_timeline.selected_ref and self.davinci_timeline.selected_ref[0] == "clip":
+            elif hasattr(self, "davinci_timeline") and self.davinci_timeline.selected_ref and self.davinci_timeline.selected_ref[0] in ("clip", "V1_clip", "A1_clip"):
                 c_idx = self.davinci_timeline.selected_ref[1]
                 if 0 <= c_idx < len(self.nle_project.clips):
                     selected_clip = self.nle_project.clips[c_idx]

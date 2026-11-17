@@ -308,7 +308,7 @@ class StudioCanvasMixin:
         if not hasattr(self, "nle_project") or not self.nle_project.clips:
             return 0
         sel = getattr(self, "player_canvas_selected", None)
-        if isinstance(sel, tuple) and sel[0] == "clip" and 0 <= sel[1] < len(self.nle_project.clips):
+        if isinstance(sel, tuple) and sel[0] in ("clip", "V1_clip", "A1_clip") and 0 <= sel[1] < len(self.nle_project.clips):
             return sel[1]
         c_idx, _c, _src = self.nle_project.timeline_to_source(getattr(self, "nle_playhead_sec", 0.0))
         return max(0, min(len(self.nle_project.clips) - 1, c_idx))

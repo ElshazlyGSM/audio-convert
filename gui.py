@@ -6347,7 +6347,7 @@ class SongCoverApp(
         self._sync_transform_sliders_from_state()
         if isinstance(sel_ref, tuple) and (sel_ref[0] in ("V2", "V3", "V4", "A2") or str(sel_ref[0]).startswith("AUD")):
             self._show_inspector_context("overlay")
-        elif isinstance(sel_ref, tuple) and sel_ref[0] == "clip":
+        elif isinstance(sel_ref, tuple) and sel_ref[0] in ("clip", "V1_clip"):
             c_idx = sel_ref[1]
             if hasattr(self, "nle_project") and 0 <= c_idx < len(self.nle_project.clips):
                 c = self.nle_project.clips[c_idx]
@@ -6356,6 +6356,15 @@ class SongCoverApp(
                 self.trim_start_var.set(self._format_time(s_sec))
                 self.trim_end_var.set(self._format_time(e_sec))
             self._show_inspector_context("video")
+        elif isinstance(sel_ref, tuple) and sel_ref[0] == "A1_clip":
+            c_idx = sel_ref[1]
+            if hasattr(self, "nle_project") and 0 <= c_idx < len(self.nle_project.clips):
+                c = self.nle_project.clips[c_idx]
+                s_sec = float(c.get("src_start", 0.0))
+                e_sec = float(c.get("src_end", 0.0))
+                self.trim_start_var.set(self._format_time(s_sec))
+                self.trim_end_var.set(self._format_time(e_sec))
+            self._show_inspector_context("audio")
         else:
             self._update_inspector_properties()
         if hasattr(self, "_refresh_master_export_summary"):
