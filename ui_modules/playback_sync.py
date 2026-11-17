@@ -260,6 +260,11 @@ class PlaybackSyncMixin:
         self._in_gap_playback = False
         if self.media_player and self.media_player.is_playing():
             self.media_player.pause()
+        if getattr(self, "aux_audio_player", None):
+            try:
+                self.aux_audio_player.pause()
+            except Exception:
+                pass
         self._cancel_playback_tick()
         self._update_run_state()
         self._refresh_play_button()
@@ -270,6 +275,12 @@ class PlaybackSyncMixin:
         self._cancel_playback_tick()
         if self.media_player:
             self.media_player.stop()
+        if getattr(self, "aux_audio_player", None):
+            try:
+                self.aux_audio_player.stop()
+                self._aux_loaded_path = None
+            except Exception:
+                pass
         if reset_position:
             self.nle_playhead_sec = 0.0
             self.timeline_var.set(0.0)
@@ -418,6 +429,8 @@ class PlaybackSyncMixin:
             if hasattr(self, "davinci_timeline"):
                 self.davinci_timeline.set_playhead(tl_now, auto_follow=True)
 
+            self._sync_aux_audio_playback(tl_now, True)
+
             th_dlg = getattr(self, "_theater_dialog", None)
             if th_dlg is not None and th_dlg.winfo_exists():
                 tot_d = self._edited_total_duration() or getattr(self, "media_duration", 0) or 1.0
@@ -437,3 +450,83 @@ class PlaybackSyncMixin:
                 self.expand_video_button.configure(text="⛶ تكبير" if is_ar else "⛶ Fullscreen")
         tick_ms = 33 if (getattr(self, "studio_live_preview_mode", False) and self.input_path and self.input_path.suffix.lower() in convert.VIDEO_EXTS) else 80
         self.playback_tick = self.after(tick_ms, self._schedule_playback_tick)
+
+    def _sync_aux_audio_playback(self, tl_sec: float, is_playing: bool):
+        if not vlc or not getattr(self, "vlc_instance", None):
+            return
+        if not hasattr(self, "aux_audio_player") or self.aux_audio_player is None:
+            try:
+                self.aux_audio_player = self.vlc_instance.media_player_new()
+                self._aux_loaded_path = None
+            except Exception:
+                self.aux_audio_player = None
+                return
+
+        if not is_playing or not hasattr(self, "nle_project"):
+            if self.aux_audio_player and self.aux_audio_player.is_playing():
+                try:
+                    self.aux_audio_player.pause()
+                except Exception:
+                    pass
+            return
+
+        a2_on = self.nle_project.track_enabled.get("A2", True)
+        audio_items = getattr(self.nle_project, "audio_items", [])
+        if not a2_on or not audio_items:
+            if self.aux_audio_player and self.aux_audio_player.is_playing():
+                try:
+                    self.aux_audio_player.pause()
+                except Exception:
+                    pass
+            return
+
+        # Find active audio item at tl_sec
+        active_item = None
+        for it in audio_items:
+            if not it.get("enabled", True) or it.get("muted", False):
+                continue
+            s = float(it.get("start_sec", 0.0))
+            e = float(it.get("end_sec", s + 10.0))
+            if s <= tl_sec < e:
+                active_item = it
+                break
+
+        if not active_item:
+            if self.aux_audio_player and self.aux_audio_player.is_playing():
+                try:
+                    self.aux_audio_player.pause()
+                except Exception:
+                    pass
+            return
+
+        p = str(active_item.get("audio_path", "")).strip()
+        if not p or not Path(p).is_file():
+            if self.aux_audio_player and self.aux_audio_player.is_playing():
+                try:
+                    self.aux_audio_player.pause()
+                except Exception:
+                    pass
+            return
+
+        s_sec = float(active_item.get("start_sec", 0.0))
+        offset_ms = int(max(0.0, tl_sec - s_sec) * 1000)
+        base_v = float(self.volume_var.get()) if hasattr(self, "volume_var") else 100.0
+        item_v = float(active_item.get("volume", 1.0))
+        vol_pct = max(0, min(200, int(round(base_v * item_v))))
+
+        try:
+            if getattr(self, "_aux_loaded_path", None) != p:
+                media = self.vlc_instance.media_new(p)
+                self.aux_audio_player.set_media(media)
+                self._aux_loaded_path = p
+                self.aux_audio_player.play()
+                self.aux_audio_player.set_time(offset_ms)
+            else:
+                cur_t = self.aux_audio_player.get_time()
+                if abs(cur_t - offset_ms) > 300:
+                    self.aux_audio_player.set_time(offset_ms)
+                if not self.aux_audio_player.is_playing():
+                    self.aux_audio_player.play()
+            self.aux_audio_player.audio_set_volume(vol_pct)
+        except Exception:
+            pass

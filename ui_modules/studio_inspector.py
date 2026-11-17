@@ -109,6 +109,9 @@ class StudioInspectorMixin:
             self._sync_transform_sliders_from_state()
         elif ctx_name == "overlay":
             self._update_inspector_properties()
+        elif ctx_name == "audio":
+            if hasattr(self, "_refresh_audio_inspector_status"):
+                self._refresh_audio_inspector_status()
         elif ctx_name == "export":
             if hasattr(self, "_refresh_master_export_summary"):
                 self._refresh_master_export_summary()

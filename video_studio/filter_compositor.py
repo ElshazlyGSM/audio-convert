@@ -595,6 +595,8 @@ def export_styled_video(
     subtitle_config=None,
     silence_config=None,
     audio_enhancement_filter=None,
+    audio_items=None,
+    a1_muted=False,
     video_quality="Match Source",
     video_codec="auto",
     ffmpeg_exe=None,
@@ -729,8 +731,22 @@ def export_styled_video(
         and abs(float(nle_clips[0].get("speed", 1.0) or 1.0) - 1.0) < 0.01
         and not nle_clips[0].get("custom_transform", False)
         and not nle_clips[0].get("muted", False)
+        and not a1_muted
+        and not bool(audio_items)
     )
-    if silence_config and silence_config.get("enabled") and not has_manual_silence_clips:
+    if (a1_muted or bool(audio_items)) and (not nle_clips or len(nle_clips) == 0):
+        nle_clips = [
+            {
+                "src_start": float(start_seconds or 0.0),
+                "src_end": float(end_seconds or (float(start_seconds or 0.0) + float(duration_seconds)) if duration_seconds else total_dur),
+                "tl_start": 0.0,
+                "speed": 1.0,
+                "volume": 0.0 if a1_muted else 1.0,
+                "muted": a1_muted,
+            }
+        ]
+        use_multi_clip_nle = True
+    elif silence_config and silence_config.get("enabled") and not has_manual_silence_clips:
         if is_single_clean_clip or not nle_clips or len(nle_clips) <= 1:
             use_multi_clip_nle = False
         else:
@@ -972,13 +988,65 @@ def export_styled_video(
         chains.extend(post_chains)
         chains.append(f"[{cur_v}]format=yuv420p[outv]")
 
+        # Add external audio items (Track A2 / BGM / Voiceover)
+        added_audio_labels = []
+        if audio_items:
+            for a_i, a_it in enumerate(audio_items):
+                if not a_it.get("enabled", True):
+                    continue
+                a_path = a_it.get("path")
+                if not a_path or not Path(a_path).exists():
+                    continue
+                a_s0 = max(0.0, float(a_it.get("src_start", 0.0) or 0.0))
+                a_dur = max(0.1, float(a_it.get("duration", 0.0) or (float(a_it.get("end_sec", 10.0)) - float(a_it.get("start_sec", 0.0)))))
+                a_tl_s = max(0.0, float(a_it.get("start_sec", 0.0) or 0.0))
+                a_vol = max(0.0, min(3.0, float(a_it.get("volume", 1.0) if a_it.get("volume") is not None else 1.0)))
+                a_mut = bool(a_it.get("muted", False))
+                if a_mut or a_vol <= 0.001:
+                    a_vol = 0.0
+
+                cmd.extend(["-ss", f"{a_s0:.3f}", "-t", f"{a_dur:.3f}", "-i", str(a_path)])
+                delay_ms = int(round(a_tl_s * 1000))
+                adelay_str = f"adelay={delay_ms}|{delay_ms}" if delay_ms > 0 else "anull"
+                a_ops = [
+                    "asetpts=PTS-STARTPTS",
+                    adelay_str,
+                    f"volume={a_vol:.3f}",
+                ]
+                a_fade_in = float(a_it.get("fade_in", 0.0) or 0.0)
+                a_fade_out = float(a_it.get("fade_out", 0.0) or 0.0)
+                if a_fade_in > 0.01:
+                    a_ops.append(f"afade=t=in:st={a_tl_s:.3f}:d={a_fade_in:.3f}")
+                if a_fade_out > 0.01:
+                    fo_st = max(a_tl_s, a_tl_s + a_dur - a_fade_out)
+                    a_ops.append(f"afade=t=out:st={fo_st:.3f}:d={a_fade_out:.3f}")
+                a_ops.append("aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo")
+                aud_lbl = f"a_track_{input_idx}"
+                chains.append(f"[{input_idx}:a]{','.join(a_ops)}[{aud_lbl}]")
+                added_audio_labels.append(f"[{aud_lbl}]")
+                input_idx += 1
+
         use_custom_audio_map = False
-        if has_audio and cur_a:
+        streams_to_mix = []
+        if has_audio and cur_a and not a1_muted:
             if audio_enhancement_filter and str(audio_enhancement_filter).strip():
-                chains.append(f"[{cur_a}]{audio_enhancement_filter}[outa]")
+                chains.append(f"[{cur_a}]{audio_enhancement_filter}[a1_enhanced]")
+                streams_to_mix.append("[a1_enhanced]")
             else:
-                chains.append(f"[{cur_a}]anull[outa]")
+                streams_to_mix.append(f"[{cur_a}]")
+
+        for a_lbl in added_audio_labels:
+            streams_to_mix.append(a_lbl)
+
+        if len(streams_to_mix) > 1:
+            mix_in = "".join(streams_to_mix)
+            chains.append(f"{mix_in}amix=inputs={len(streams_to_mix)}:duration=first:dropout_transition=2[outa]")
             use_custom_audio_map = True
+        elif len(streams_to_mix) == 1:
+            chains.append(f"{streams_to_mix[0]}anull[outa]")
+            use_custom_audio_map = True
+        else:
+            use_custom_audio_map = False
 
         clean_chains = [c.rstrip(" ;") for c in chains if c and c.strip()]
         filter_complex_str = ";".join(clean_chains)
@@ -1111,7 +1179,7 @@ def export_styled_video(
             cmd.extend(["-map", "0:a"])
     elif use_custom_audio_map:
         cmd.extend(["-map", "[outv]", "-map", "[outa]"])
-    elif not use_multi_clip_nle:
+    elif (not a1_muted) and (not use_multi_clip_nle):
         cmd.extend(["-map", "[outv]", "-map", "0:a?"])
     else:
         cmd.extend(["-map", "[outv]"])

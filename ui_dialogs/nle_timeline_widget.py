@@ -28,6 +28,7 @@ class DaVinciTimelinePanel(ttk.Frame):
         ("V2", 30, "#55359e", "#6d46c7", "⭐ أيقونات/صور", "⭐ Icons/Img", "+", "media"),
         ("V1", 40, "#27476e", "#356094", "🎬 الفيديو V1", "🎬 Video V1", "✂", "video"),
         ("A1", 42, "#1b5933", "#257845", "🔊 الصوت A1", "🔊 Audio A1", "⚡", "audio"),
+        ("A2", 36, "#134e5e", "#1b6d85", "🎵 مسار صوت A2", "🎵 Audio Track A2", "+", "audio_item"),
     ]
     TRACK_SPECS = DEFAULT_TRACK_SPECS  # Backward-compatibility alias
 
@@ -219,6 +220,7 @@ class DaVinciTimelinePanel(ttk.Frame):
         self.btn_add_ico = self._mk_bar_btn(bar, lambda: self.on_add_element("icon", self.playhead_sec), bg="#2d224c", fg="#d2a8ff")
         self.btn_add_img = self._mk_bar_btn(bar, lambda: self.on_add_element("image", self.playhead_sec), bg="#22354c", fg="#79c0ff")
         self.btn_add_lgo = self._mk_bar_btn(bar, lambda: self.on_add_element("logo", self.playhead_sec), bg="#1d3b3a", fg="#56d364")
+        self.btn_add_aud = self._mk_bar_btn(bar, lambda: self.add_audio_file_dialog(self.playhead_sec), bg="#134e5e", fg="#7ee787")
 
         self.lbl_hud_toast = tk.Label(bar, text="", bg="#161920", fg="#58a6ff", font=("Segoe UI", 8, "bold"))
         self.lbl_hud_toast.pack(side="left", padx=8)
@@ -365,6 +367,8 @@ class DaVinciTimelinePanel(ttk.Frame):
         self.btn_add_ico.configure(text="+ أيقونة" if ar else "+ Icon")
         self.btn_add_img.configure(text="+ صورة" if ar else "+ Image")
         self.btn_add_lgo.configure(text="+ لوجو" if ar else "+ Logo")
+        if hasattr(self, "btn_add_aud"):
+            self.btn_add_aud.configure(text="+ 🎵 صوت" if ar else "+ 🎵 Audio")
         self.btn_zoom_cut.configure(text="🎯 زوم دقيق" if ar else "🎯 Fine Zoom")
         self.btn_zoom_fit.configure(text="احتواء" if ar else "Fit")
         self.redraw()
@@ -372,9 +376,44 @@ class DaVinciTimelinePanel(ttk.Frame):
     # ------------------------------------------------------------------
     # Dynamic Tracks Management & Vertical Height Scaling
     # ------------------------------------------------------------------
+    def add_audio_file_dialog(self, at_tl_sec: Optional[float] = None):
+        """Open a file dialog to select an audio file and add it to timeline track A2."""
+        from tkinter import filedialog
+        ar = self._is_ar()
+        filetypes = [
+            ("ملفات الصوت / Audio Files" if ar else "Audio Files", "*.mp3 *.wav *.aac *.m4a *.flac *.ogg *.wma *.opus"),
+            ("MP3 Audio", "*.mp3"),
+            ("WAV Audio", "*.wav"),
+            ("M4A / AAC Audio", "*.m4a *.aac"),
+            ("All files", "*.*"),
+        ]
+        chosen = filedialog.askopenfilename(
+            title="اختيار ملف صوتي أو موسيقى خلفية" if ar else "Select Audio File / Background Music",
+            filetypes=filetypes,
+        )
+        if not chosen:
+            return
+        insert_sec = self.playhead_sec if at_tl_sec is None else max(0.0, float(at_tl_sec))
+        new_item = self.nle.add_audio_item(chosen, start_sec=insert_sec)
+        self.on_modified()
+        self.redraw()
+        # Auto-select the newly added audio item
+        idx = len(self.nle.audio_items) - 1
+        self.selected_items.clear()
+        self.selected_items.add(("A2", idx))
+        self._sync_selection_refs()
+        self.redraw()
+        nm = Path(chosen).name
+        self.show_hud_toast(f"🎵 تم إضافة الصوت '{nm}' بنجاح" if ar else f"🎵 Audio '{nm}' added successfully")
+
     def _show_add_track_menu(self):
         ar = self._is_ar()
         m = tk.Menu(self, tearoff=0)
+        m.add_command(
+            label="🎵 " + ("إضافة ملف صوتي / موسيقى (مسار A2)" if ar else "Add Audio File / Music (Track A2)"),
+            command=lambda: self.add_audio_file_dialog(self.playhead_sec),
+        )
+        m.add_separator()
         m.add_command(
             label="📝 " + ("طبقة نصوص إضافية (Text Track)" if ar else "Add Text Track"),
             command=lambda: self.add_extra_track("text"),
@@ -426,8 +465,8 @@ class DaVinciTimelinePanel(ttk.Frame):
 
     def delete_track(self, track_key: str):
         ar = self._is_ar()
-        if track_key in ("V1", "A1"):
-            self.show_hud_toast("⚠️ لا يمكن حذف مسار الفيديو أو الصوت الرئيسي" if ar else "⚠️ Cannot delete primary Video or Audio track")
+        if track_key in ("V1", "A1", "A2"):
+            self.show_hud_toast("⚠️ لا يمكن حذف مسارات المشروع الأساسية" if ar else "⚠️ Cannot delete primary project tracks")
             return
         idx = next((i for i, t in enumerate(self.track_specs) if t[0] == track_key), None)
         if idx is None:
@@ -442,6 +481,8 @@ class DaVinciTimelinePanel(ttk.Frame):
         self.show_hud_toast("🗑️ تم حذف الطبقة بنجاح" if ar else "🗑️ Layer deleted successfully")
 
     def move_track_up(self, track_key: str):
+        if track_key in ("V1", "A1", "A2"):
+            return
         idx = next((i for i, t in enumerate(self.track_specs) if t[0] == track_key), None)
         if idx is None or idx <= 0:
             return
@@ -450,10 +491,12 @@ class DaVinciTimelinePanel(ttk.Frame):
         self.redraw()
 
     def move_track_down(self, track_key: str):
+        if track_key in ("V1", "A1", "A2"):
+            return
         idx = next((i for i, t in enumerate(self.track_specs) if t[0] == track_key), None)
         if idx is None or idx >= len(self.track_specs) - 1:
             return
-        if self.track_specs[idx + 1][0] in ("V1", "A1"):
+        if self.track_specs[idx + 1][0] in ("V1", "A1", "A2"):
             return
         target_idx = idx + 1
         self.track_specs[idx], self.track_specs[target_idx] = self.track_specs[target_idx], self.track_specs[idx]
@@ -1372,8 +1415,9 @@ class DaVinciTimelinePanel(ttk.Frame):
 
     def _track_y_bounds(self, track_key: str) -> Tuple[int, int]:
         y = self.RULER_H
-        for tkey, th, *_ in self.TRACK_SPECS:
-            if tkey == track_key:
+        for tspec in self.track_specs:
+            th = self._get_track_height(tspec)
+            if tspec[0] == track_key:
                 return y, y + th
             y += th
         return y, y + 32
@@ -1382,9 +1426,10 @@ class DaVinciTimelinePanel(ttk.Frame):
         if y < self.RULER_H:
             return "RULER"
         cur_y = self.RULER_H
-        for tkey, th, *_ in self.TRACK_SPECS:
+        for tspec in self.track_specs:
+            th = self._get_track_height(tspec)
             if cur_y <= y < cur_y + th:
-                return tkey
+                return tspec[0]
             cur_y += th
         return None
 
@@ -1510,6 +1555,19 @@ class DaVinciTimelinePanel(ttk.Frame):
                 if (y1 - y0) >= 22:
                     c.create_rectangle(dx0 + 1, y0 + 3, dx1 - 1, y0 + 8, fill=hdr_c, outline="")
 
+                if ttype == "audio_item" or tkey == "A2" or tkey.startswith("AUD"):
+                    item_w = dx1 - dx0
+                    if item_w > 20:
+                        mid_y = (y0 + y1) // 2
+                        bar_step = 6
+                        num_bars = int(item_w // bar_step)
+                        for b_i in range(min(num_bars, 120)):
+                            bx = dx0 + 4 + b_i * bar_step
+                            if bx + 2 >= dx1 - 4:
+                                break
+                            bh = int((((b_i * 7 + idx * 11) % 9) + 3) * (0.6 if (y1 - y0) < 28 else 0.85))
+                            c.create_line(bx, mid_y - bh, bx, mid_y + bh, fill="#2dd4bf" if track_on else "#4b5563", width=2)
+
                 lbl = self._overlay_display_label(tkey, it, ar)
                 if is_full:
                     lbl = f"∞ {lbl}"
@@ -1517,6 +1575,8 @@ class DaVinciTimelinePanel(ttk.Frame):
                 if avail_w > 18:
                     max_chars = max(3, int(avail_w / 6.0))
                     f_sz = 7 if (y1 - y0) < 24 else 8
+                    if ttype == "audio_item" or tkey == "A2" or tkey.startswith("AUD"):
+                        c.create_text(dx0 + 6, (y0 + y1) // 2 + 1, text=lbl[:max_chars], anchor="w", fill="#071b18", font=("Segoe UI", f_sz, "bold"))
                     c.create_text(dx0 + 5, (y0 + y1) // 2, text=lbl[:max_chars], anchor="w", fill="#ffffff" if is_sel else "#f0f6fc", font=("Segoe UI", f_sz, "bold"))
 
                 if is_sel:
@@ -1785,7 +1845,7 @@ class DaVinciTimelinePanel(ttk.Frame):
             c.create_line(0, hy + th, self.HEADER_W, hy + th, fill="#282f3c", width=1)
 
             # Eye / Speaker toggle box (x: 6..23)
-            toggle_icon = ("🔊" if en else "🔇") if tkey == "A1" else ("👁" if en else "🚫")
+            toggle_icon = ("🔊" if en else "🔇") if (tkey in ("A1", "A2") or tkey.startswith("AUD")) else ("👁" if en else "🚫")
             bh = min(18, max(12, th - 4))
             c.create_rectangle(6, hy + (th // 2) - bh // 2, 23, hy + (th // 2) + bh // 2, fill="#242b38", outline="#384152")
             c.create_text(14, hy + th // 2, text=toggle_icon, fill="#e6edf3" if en else "#6e7681", font=("Segoe UI", 7 if th < 24 else 8))
@@ -1823,6 +1883,12 @@ class DaVinciTimelinePanel(ttk.Frame):
         self._update_blade_preview_fast()
 
     def _overlay_display_label(self, tkey: str, item: Dict[str, Any], ar: bool) -> str:
+        if tkey == "A2" or tkey.startswith("AUD") or item.get("audio_path"):
+            p = str(item.get("audio_path", "")).strip()
+            nm = Path(p).name if p else ("صوت" if ar else "Audio")
+            vol = int(round(float(item.get("volume", 1.0)) * 100))
+            mut = " 🔇" if item.get("muted") else ""
+            return f"🎵 {nm} ({vol}%){mut}"
         if tkey.startswith("TXT") or tkey == "V3":
             raw = str(item.get("text", "")).strip() or ("نص" if ar else "Text")
             return f"T+ {prepare_arabic_for_rendering(raw)}"
@@ -1941,7 +2007,9 @@ class DaVinciTimelinePanel(ttk.Frame):
         if mx >= self.HEADER_W - 23:
             tspec = next((t for t in self.track_specs if t[0] == tkey), None)
             ttype = tspec[7] if (tspec and len(tspec) > 7) else ("text" if tkey.startswith("TXT") or tkey == "V3" else ("media" if tkey.startswith("MED") or tkey == "V2" else ("logo" if tkey.startswith("LOG") or tkey == "V4" else "video")))
-            if ttype == "logo" or tkey == "V4":
+            if ttype == "audio_item" or tkey == "A2" or tkey.startswith("AUD"):
+                self.add_audio_file_dialog(self.playhead_sec)
+            elif ttype == "logo" or tkey == "V4":
                 self.on_add_element("logo", self.playhead_sec)
             elif ttype == "text" or tkey == "V3":
                 self.on_add_element("text", self.playhead_sec)
@@ -1985,6 +2053,14 @@ class DaVinciTimelinePanel(ttk.Frame):
         self.nle.track_enabled[tkey] = not self.nle.track_enabled.get(tkey, True)
         self.on_modified()
         self.redraw()
+        ar = self._is_ar()
+        is_on = self.nle.track_enabled.get(tkey, True)
+        if tkey == "A1":
+            self.show_hud_toast("🔊 تم تفعيل صوت الفيديو الأصلي" if is_on else "🔇 تم كتم صوت الفيديو الأصلي بالكامل" if ar else ("🔊 Original video audio enabled" if is_on else "🔇 Original video audio muted"))
+        elif tkey == "A2" or tkey.startswith("AUD"):
+            self.show_hud_toast("🎵 تم تفعيل مسار الصوت المضاف" if is_on else "🔇 تم كتم مسار الصوت المضاف" if ar else ("🎵 Added audio track enabled" if is_on else "🔇 Added audio track muted"))
+        elif tkey == "V1":
+            self.show_hud_toast("👁️ تم إظهار مسار الفيديو" if is_on else "🚫 تم إخفاء مسار الفيديو" if ar else ("👁️ Video track shown" if is_on else "🚫 Video track hidden"))
 
     def _on_press(self, event):
         self.canvas.focus_set()

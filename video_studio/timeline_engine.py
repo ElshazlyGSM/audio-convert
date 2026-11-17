@@ -42,6 +42,7 @@ class NLEProjectState:
         self.media_items: List[Dict[str, Any]] = []   # Track V2 (icons & images)
         self.text_items: List[Dict[str, Any]] = []    # Track V3 (texts)
         self.logo_items: List[Dict[str, Any]] = []    # Track V4 (logos)
+        self.audio_items: List[Dict[str, Any]] = []   # Track A2 (external audio & music)
         self.extra_tracks: Dict[str, List[Dict[str, Any]]] = {}
         self.track_enabled: Dict[str, bool] = {
             "V4": True,
@@ -49,6 +50,7 @@ class NLEProjectState:
             "V2": True,
             "V1": True,
             "A1": True,
+            "A2": True,
         }
         self.track_locked: Dict[str, bool] = {
             "V4": False,
@@ -56,6 +58,7 @@ class NLEProjectState:
             "V2": False,
             "V1": False,
             "A1": False,
+            "A2": False,
         }
         self.ripple_mode: bool = True
         self._id_counter: int = 1
@@ -88,6 +91,7 @@ class NLEProjectState:
             "media_items": self.media_items,
             "text_items": self.text_items,
             "logo_items": self.logo_items,
+            "audio_items": getattr(self, "audio_items", []),
             "extra_tracks": getattr(self, "extra_tracks", {}),
             "track_enabled": self.track_enabled,
             "track_locked": getattr(self, "track_locked", {}),
@@ -101,9 +105,10 @@ class NLEProjectState:
         self.media_items = data.get("media_items", [])
         self.text_items = data.get("text_items", [])
         self.logo_items = data.get("logo_items", [])
+        self.audio_items = data.get("audio_items", [])
         self.extra_tracks = data.get("extra_tracks", {})
-        self.track_enabled = data.get("track_enabled", {"V4": True, "V3": True, "V2": True, "V1": True, "A1": True})
-        self.track_locked = data.get("track_locked", {"V4": False, "V3": False, "V2": False, "V1": False, "A1": False})
+        self.track_enabled = data.get("track_enabled", {"V4": True, "V3": True, "V2": True, "V1": True, "A1": True, "A2": True})
+        self.track_locked = data.get("track_locked", {"V4": False, "V3": False, "V2": False, "V1": False, "A1": False, "A2": False})
         self.ripple_mode = bool(data.get("ripple_mode", True))
         self._id_counter = max(self._id_counter, int(data.get("id_counter", 1)))
         self.recompute_timeline()
@@ -149,6 +154,7 @@ class NLEProjectState:
             self.media_items = []
             self.text_items = []
             self.logo_items = []
+            self.audio_items = []
             self.extra_tracks = {}
             self._undo_stack.clear()
             self._redo_stack.clear()
@@ -182,6 +188,7 @@ class NLEProjectState:
         self.media_items = []
         self.text_items = []
         self.logo_items = []
+        self.audio_items = []
         self._undo_stack.clear()
         self._redo_stack.clear()
         self.recompute_timeline()
@@ -263,7 +270,7 @@ class NLEProjectState:
     @property
     def total_duration(self) -> float:
         max_end = float(self.clips[-1].get("tl_end", 0.0)) if self.clips else float(self.source_duration or 0.0)
-        tracks_to_check = [self.media_items, self.text_items, self.logo_items]
+        tracks_to_check = [self.media_items, self.text_items, self.logo_items, getattr(self, "audio_items", [])]
         if hasattr(self, "extra_tracks") and self.extra_tracks:
             tracks_to_check.extend(self.extra_tracks.values())
         for t_list in tracks_to_check:
@@ -315,8 +322,12 @@ class NLEProjectState:
     def has_timeline_cuts_or_clip_fx(self) -> bool:
         """
         Returns True if the user split, trimmed, separated with gaps, deleted, reordered,
-        or changed speed/volume/transform on V1 clips.
+        changed speed/volume/transform on V1 clips, added external audio, or muted A1.
         """
+        if getattr(self, "audio_items", None):
+            return True
+        if hasattr(self, "track_enabled") and not self.track_enabled.get("A1", True):
+            return True
         if len(self.clips) != 1:
             return True
         if self.get_timeline_gaps():
@@ -773,6 +784,10 @@ class NLEProjectState:
             return self.text_items
         if track_key == "V4":
             return self.logo_items
+        if track_key == "A2" or track_key.startswith("AUD"):
+            if not hasattr(self, "audio_items"):
+                self.audio_items = []
+            return self.audio_items
         if hasattr(self, "extra_tracks") and track_key in self.extra_tracks:
             return self.extra_tracks[track_key]
         return []
@@ -784,10 +799,77 @@ class NLEProjectState:
             self.extra_tracks[track_key] = []
         return self.extra_tracks[track_key]
 
+    def add_audio_item(
+        self,
+        audio_path: str,
+        start_sec: float = 0.0,
+        duration: Optional[float] = None,
+        volume: float = 1.0,
+    ) -> Dict[str, Any]:
+        """
+        Adds an external audio track (music/BGM/voiceover) onto Track A2.
+        Pushes undo state and returns the created audio item dictionary.
+        """
+        p = Path(audio_path).resolve()
+        dur = float(duration or 0.0)
+        if dur <= 0.05:
+            try:
+                import subprocess, json
+                res = subprocess.run(
+                    [
+                        "ffprobe", "-v", "error",
+                        "-show_entries", "format=duration",
+                        "-of", "json",
+                        str(p),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    timeout=5,
+                )
+                data = json.loads(res.stdout)
+                dur = float(data.get("format", {}).get("duration", 10.0))
+            except Exception:
+                dur = 10.0
+
+        dur = max(0.5, dur)
+        tl_s = max(0.0, float(start_sec))
+        tl_e = round(tl_s + dur, 3)
+
+        self.push_undo()
+        if not hasattr(self, "audio_items"):
+            self.audio_items = []
+
+        item = {
+            "id": self.next_id("aud"),
+            "type": "audio",
+            "name": p.stem,
+            "path": str(p),
+            "audio_path": str(p),
+            "start_sec": round(tl_s, 3),
+            "end_sec": round(tl_e, 3),
+            "src_start": 0.0,
+            "src_end": round(dur, 3),
+            "duration": round(dur, 3),
+            "volume": float(volume),
+            "muted": False,
+            "fade_in": 0.0,
+            "fade_out": 0.0,
+            "enabled": True,
+        }
+        self.audio_items.append(item)
+        self.recompute_timeline()
+        return item
+
     def delete_track(self, track_key: str) -> bool:
         self.push_undo()
         if hasattr(self, "extra_tracks") and track_key in self.extra_tracks:
             del self.extra_tracks[track_key]
+            self.recompute_timeline()
+            return True
+        if track_key == "A2":
+            if hasattr(self, "audio_items"):
+                self.audio_items.clear()
             self.recompute_timeline()
             return True
         if track_key == "V2":

@@ -2294,7 +2294,7 @@ class SongCoverApp(
         add_palette = ttk.Frame(inspector_panel)
         add_palette.grid(row=0, column=0, sticky="ew", pady=(0, 3))
         self.add_palette = add_palette
-        for c_i in range(4):
+        for c_i in range(5):
             add_palette.columnconfigure(c_i, weight=1)
 
         self.btn_pal_txt = ttk.Button(
@@ -2327,7 +2327,15 @@ class SongCoverApp(
             command=lambda: self._nle_add_element("logo"),
             style="Player.TButton",
         )
-        self.btn_pal_lgo.grid(row=0, column=3, sticky="ew", padx=(2, 0))
+        self.btn_pal_lgo.grid(row=0, column=3, sticky="ew", padx=2)
+
+        self.btn_pal_aud = ttk.Button(
+            add_palette,
+            text="🎵 + صوت" if is_ar else "🎵 + Audio",
+            command=lambda: self.davinci_timeline.add_audio_file_dialog() if hasattr(self, "davinci_timeline") else None,
+            style="Player.TButton",
+        )
+        self.btn_pal_aud.grid(row=0, column=4, sticky="ew", padx=(2, 0))
 
         # Row 1: Tool Context Switcher Bar (clicking any tool shows ONLY its settings in the single slot below)
         ctx_bar = ttk.Frame(inspector_panel)
@@ -3172,6 +3180,40 @@ class SongCoverApp(
             variable=self.boost_anti_clip_var,
         )
         self.chk_studio_anticlip.grid(row=3, column=0, columnspan=3, sticky="w", pady=(4, 0))
+
+        # Audio Tracks & External Mixing Controls
+        aud_tracks_card = ttk.LabelFrame(
+            self.ctx_frame_audio,
+            text="🎚️ مسارات وتحكم الصوت" if is_ar else "🎚️ Audio Tracks & Mixing",
+            padding=(7, 5, 7, 5),
+        )
+        aud_tracks_card.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(8, 2))
+        aud_tracks_card.columnconfigure(0, weight=1)
+
+        self.btn_toggle_orig_audio = ttk.Button(
+            aud_tracks_card,
+            text="🔇 كتم صوت الفيديو الأصلي بالكامل (A1)" if is_ar else "🔇 Mute Video Audio (A1)",
+            command=self._toggle_orig_video_audio,
+            style="Player.TButton",
+        )
+        self.btn_toggle_orig_audio.grid(row=0, column=0, sticky="ew", pady=(1, 3))
+
+        self.btn_add_ext_audio = ttk.Button(
+            aud_tracks_card,
+            text="➕ إضافة ملف صوت / موسيقى (مسار A2)" if is_ar else "➕ Add Audio / Music (A2)",
+            command=lambda: self.davinci_timeline.add_audio_file_dialog() if hasattr(self, "davinci_timeline") else None,
+            style="PrimaryPlayer.TButton",
+        )
+        self.btn_add_ext_audio.grid(row=1, column=0, sticky="ew", pady=(1, 3))
+
+        self.lbl_audio_tracks_status = ttk.Label(
+            aud_tracks_card,
+            text="",
+            font=("Segoe UI", 8),
+            foreground="#58a6ff",
+            wraplength=330,
+        )
+        self.lbl_audio_tracks_status.grid(row=2, column=0, sticky="w", pady=(2, 0))
 
         # ---------------- Context 6: AI Transcription, Subtitles & Quick Range Trim ----------------
         self.ctx_frame_subs = ttk.Frame(self.dynamic_inspector_host)
@@ -4070,6 +4112,12 @@ class SongCoverApp(
             self.btn_pal_img.configure(text="🖼️ + صورة" if is_ar else "🖼️ + Image")
         if hasattr(self, "btn_pal_lgo"):
             self.btn_pal_lgo.configure(text="🛡️ + لوجو" if is_ar else "🛡️ + Logo")
+        if hasattr(self, "btn_pal_aud"):
+            self.btn_pal_aud.configure(text="🎵 + صوت" if is_ar else "🎵 + Audio")
+        if hasattr(self, "btn_add_ext_audio"):
+            self.btn_add_ext_audio.configure(text="➕ إضافة ملف صوت / موسيقى (مسار A2)" if is_ar else "➕ Add Audio / Music (A2)")
+        if hasattr(self, "_refresh_audio_inspector_status"):
+            self._refresh_audio_inspector_status()
         if hasattr(self, "davinci_timeline"):
             self.davinci_timeline.apply_language()
 
@@ -6190,7 +6238,7 @@ class SongCoverApp(
     def _on_nle_timeline_select(self, sel_ref):
         self.player_canvas_selected = sel_ref
         self._sync_transform_sliders_from_state()
-        if isinstance(sel_ref, tuple) and sel_ref[0] in ("V2", "V3", "V4"):
+        if isinstance(sel_ref, tuple) and (sel_ref[0] in ("V2", "V3", "V4", "A2") or str(sel_ref[0]).startswith("AUD")):
             self._show_inspector_context("overlay")
         elif isinstance(sel_ref, tuple) and sel_ref[0] == "clip":
             c_idx = sel_ref[1]
@@ -6206,6 +6254,48 @@ class SongCoverApp(
         if hasattr(self, "_refresh_master_export_summary"):
             self._refresh_master_export_summary()
         self._render_player_studio_canvas()
+
+    def _toggle_orig_video_audio(self):
+        if not hasattr(self, "nle_project"):
+            return
+        cur = self.nle_project.track_enabled.get("A1", True)
+        self.nle_project.track_enabled["A1"] = not cur
+        is_ar = self.language_var.get() == "العربية"
+        self._refresh_audio_inspector_status()
+        if hasattr(self, "davinci_timeline"):
+            self.davinci_timeline.redraw()
+            is_on = self.nle_project.track_enabled.get("A1", True)
+            self.davinci_timeline.show_hud_toast("🔊 تم تفعيل صوت الفيديو الأصلي" if is_on else "🔇 تم كتم صوت الفيديو الأصلي بالكامل" if is_ar else ("🔊 Original video audio enabled" if is_on else "🔇 Original video audio muted"))
+        if hasattr(self, "media_player") and self.media_player:
+            self._apply_active_clip_playback_fx()
+        self._refresh_master_export_summary()
+
+    def _refresh_audio_inspector_status(self):
+        if not hasattr(self, "lbl_audio_tracks_status") or not self.lbl_audio_tracks_status.winfo_exists():
+            return
+        is_ar = self.language_var.get() == "العربية"
+        a1_on = self.nle_project.track_enabled.get("A1", True) if hasattr(self, "nle_project") else True
+        num_a2 = len(getattr(self.nle_project, "audio_items", [])) if hasattr(self, "nle_project") else 0
+        a2_on = self.nle_project.track_enabled.get("A2", True) if hasattr(self, "nle_project") else True
+
+        if hasattr(self, "btn_toggle_orig_audio"):
+            if a1_on:
+                self.btn_toggle_orig_audio.configure(
+                    text="🔇 كتم صوت الفيديو الأصلي بالكامل (A1)" if is_ar else "🔇 Mute Video Audio (A1)",
+                    style="Player.TButton",
+                )
+            else:
+                self.btn_toggle_orig_audio.configure(
+                    text="🔊 تشغيل صوت الفيديو الأصلي (A1)" if is_ar else "🔊 Unmute Video Audio (A1)",
+                    style="PrimaryPlayer.TButton",
+                )
+
+        a1_str = ("🔊 مفعل" if is_ar else "🔊 On") if a1_on else ("🔇 مكتوم" if is_ar else "🔇 Muted")
+        a2_str = f"🎵 {num_a2} " + (("ملفات مضافة" if num_a2 != 1 else "ملف مضاف") if is_ar else "items") if num_a2 > 0 else ("لا توجد ملفات" if is_ar else "None")
+        if not a2_on and num_a2 > 0:
+            a2_str += " (🔇 مكتوم)" if is_ar else " (Muted)"
+        txt = f"• صوت الفيديو: {a1_str}  |  • المسار A2: {a2_str}" if is_ar else f"• Video Audio: {a1_str}  |  • Track A2: {a2_str}"
+        self.lbl_audio_tracks_status.configure(text=txt)
 
     def _on_nle_timeline_modified(self):
         tot = max(0.1, self._edited_total_duration() or 60.0)
@@ -6223,7 +6313,7 @@ class SongCoverApp(
             if kind == "clip":
                 if not (0 <= idx < len(self.nle_project.clips)):
                     self.player_canvas_selected = ("clip", max(0, len(self.nle_project.clips) - 1))
-            elif kind in ("V2", "V3", "V4"):
+            elif kind in ("V2", "V3", "V4", "A2") or str(kind).startswith("AUD"):
                 tlist = self.nle_project.get_track_list(kind)
                 if not (0 <= idx < len(tlist)):
                     self.player_canvas_selected = ("clip", max(0, len(self.nle_project.clips) - 1))
@@ -6930,11 +7020,134 @@ class SongCoverApp(
             self._build_overlay_timing_controls(self.item_prop_card, 5, "V2", item, m_idx)
             return
 
+        # ---------------- A2: Audio Item Properties ----------------
+        if sel and (sel[0] == "A2" or str(sel[0]).startswith("AUD")) and 0 <= sel[1] < len(self.nle_project.audio_items):
+            a_idx = sel[1]
+            item = self.nle_project.audio_items[a_idx]
+            self.item_prop_card.configure(text=f"🎵 خصائص ملف الصوت #{a_idx + 1}" if is_ar else f"🎵 Audio File #{a_idx + 1} Properties")
+
+            # Row 1: File name & Change file button
+            p_val = str(item.get("audio_path", "")).strip()
+            p_name = Path(p_val).name if p_val else ("بدون ملف" if is_ar else "No file")
+            fn_row = ttk.Frame(self.item_prop_card)
+            fn_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(2, 4))
+            fn_row.columnconfigure(0, weight=1)
+
+            lbl_fn = ttk.Label(fn_row, text=f"📁 {p_name}", font=("Segoe UI", 8, "bold"), foreground="#79c0ff", wraplength=230)
+            lbl_fn.grid(row=0, column=0, sticky="w")
+
+            def _replace_audio_file():
+                chosen = filedialog.askopenfilename(
+                    title="تغيير الملف الصوتي" if is_ar else "Replace Audio File",
+                    filetypes=[("Audio Files", "*.mp3 *.wav *.aac *.m4a *.flac *.ogg *.wma *.opus"), ("All Files", "*.*")],
+                )
+                if chosen:
+                    self.nle_project.push_undo()
+                    item["audio_path"] = chosen
+                    lbl_fn.configure(text=f"📁 {Path(chosen).name}")
+                    if hasattr(self, "davinci_timeline"):
+                        self.davinci_timeline.redraw()
+                    self._on_nle_timeline_modified()
+
+            ttk.Button(fn_row, text="تغيير" if is_ar else "Browse", command=_replace_audio_file, style="Player.TButton", width=7).grid(row=0, column=1, sticky="e", padx=(4, 0))
+
+            # Row 2: Volume Slider & Spinbox
+            vol_row = ttk.Frame(self.item_prop_card)
+            vol_row.grid(row=2, column=0, columnspan=2, sticky="ew", pady=2)
+            vol_row.columnconfigure(1, weight=1)
+
+            cur_vol = float(item.get("volume", 1.0))
+            vol_spin_var = tk.StringVar(value=f"{int(round(cur_vol * 100))}")
+
+            ttk.Label(vol_row, text="الصوت%:" if is_ar else "Vol%:").grid(row=0, column=0, sticky="w", padx=(0, 4))
+
+            def _on_vol_slider(v):
+                fv = round(float(v), 2)
+                item["volume"] = fv
+                vol_spin_var.set(f"{int(round(fv * 100))}")
+                if hasattr(self, "davinci_timeline"):
+                    self.davinci_timeline.redraw()
+                if hasattr(self, "aux_audio_player") and self.aux_audio_player:
+                    base_v = float(self.volume_var.get()) if hasattr(self, "volume_var") else 100.0
+                    self.aux_audio_player.audio_set_volume(max(0, min(200, int(round(base_v * fv)))))
+                self._refresh_master_export_summary()
+
+            vol_slider = ttk.Scale(vol_row, from_=0.0, to=2.0, value=cur_vol, orient="horizontal", command=_on_vol_slider)
+            vol_slider.grid(row=0, column=1, sticky="ew")
+
+            def _on_vol_spin(*_a):
+                try:
+                    pct = max(0, min(200, int(vol_spin_var.get().strip())))
+                    fv = round(pct / 100.0, 2)
+                    item["volume"] = fv
+                    vol_slider.set(fv)
+                    if hasattr(self, "davinci_timeline"):
+                        self.davinci_timeline.redraw()
+                    self._refresh_master_export_summary()
+                except Exception:
+                    pass
+
+            sp = tk.Spinbox(vol_row, from_=0, to=200, increment=5, textvariable=vol_spin_var, width=5, font=("Consolas", 8, "bold"), command=_on_vol_spin)
+            sp.grid(row=0, column=2, sticky="e", padx=(4, 0))
+            sp.bind("<Return>", _on_vol_spin)
+
+            # Row 3: Mute Checkbox
+            mut_row = ttk.Frame(self.item_prop_card)
+            mut_row.grid(row=3, column=0, columnspan=2, sticky="ew", pady=2)
+
+            mut_var = tk.BooleanVar(value=bool(item.get("muted", False)))
+            def _on_mut():
+                item["muted"] = bool(mut_var.get())
+                if hasattr(self, "davinci_timeline"):
+                    self.davinci_timeline.redraw()
+                if hasattr(self, "aux_audio_player") and self.aux_audio_player and item["muted"]:
+                    self.aux_audio_player.pause()
+                self._refresh_master_export_summary()
+
+            ttk.Checkbutton(
+                mut_row,
+                text="🔇 كتم هذا الملف الصوتي" if is_ar else "🔇 Mute this audio item",
+                variable=mut_var,
+                command=_on_mut,
+            ).grid(row=0, column=0, sticky="w")
+
+            # Row 4: Timing row (Start sec & Duration sec)
+            self._build_overlay_timing_controls(self.item_prop_card, 4, "A2", item, a_idx)
+
+            # Row 5: Action buttons (Duplicate, Delete)
+            act_f = ttk.Frame(self.item_prop_card)
+            act_f.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(6, 2))
+            act_f.columnconfigure(0, weight=1)
+            act_f.columnconfigure(1, weight=1)
+
+            def _dup_aud():
+                self.nle_project.push_undo()
+                new_it = copy.deepcopy(item)
+                new_it["id"] = self.nle_project.next_id("a2")
+                new_it["start_sec"] = float(item.get("end_sec", 0.0))
+                new_it["end_sec"] = new_it["start_sec"] + float(item.get("duration", 5.0))
+                self.nle_project.audio_items.append(new_it)
+                self.player_canvas_selected = ("A2", len(self.nle_project.audio_items) - 1)
+                self._on_nle_timeline_modified()
+                self._update_inspector_properties()
+
+            def _del_aud():
+                self.nle_project.push_undo()
+                if 0 <= a_idx < len(self.nle_project.audio_items):
+                    self.nle_project.audio_items.pop(a_idx)
+                self.player_canvas_selected = None
+                self._on_nle_timeline_modified()
+                self._show_inspector_context("video")
+
+            ttk.Button(act_f, text="📋 تكرار" if is_ar else "📋 Duplicate", command=_dup_aud, style="Player.TButton").grid(row=0, column=0, sticky="ew", padx=(0, 2))
+            ttk.Button(act_f, text="🗑️ حذف" if is_ar else "🗑️ Delete", command=_del_aud, style="Player.TButton").grid(row=0, column=1, sticky="ew", padx=(2, 0))
+            return
+
         # ---------------- Default: Active Layers Summary & Quick Select ----------------
         self.item_prop_card.configure(
             text="📚 طبقات وعناصر التايم لاين الحالية" if is_ar else "📚 Active Timeline Layers"
         )
-        total_ov = len(self.nle_project.logo_items) + len(self.nle_project.text_items) + len(self.nle_project.media_items)
+        total_ov = len(self.nle_project.logo_items) + len(self.nle_project.text_items) + len(self.nle_project.media_items) + len(self.nle_project.audio_items)
         if total_ov == 0:
             msg = (
                 "💡 أضف (نص، أيقونة، صورة، أو لوجو) من الأزرار بالأعلى أو زر [+] في كل مسار،\n"
@@ -6955,14 +7168,17 @@ class SongCoverApp(
                 ("V4", "🛡️", self.nle_project.logo_items),
                 ("V3", "📝", self.nle_project.text_items),
                 ("V2", "⭐", self.nle_project.media_items),
+                ("A2", "🎵", self.nle_project.audio_items),
             ):
                 for idx, it in enumerate(items):
-                    if r_i >= 6:
+                    if r_i >= 8:
                         break
                     if t_key == "V3":
                         nm = it.get("text", "Text")[:24]
                     elif t_key == "V4":
                         nm = Path(it.get("path", "Logo")).name[:24]
+                    elif t_key == "A2":
+                        nm = Path(it.get("audio_path", "Audio")).name[:24]
                     else:
                         nm = Path(it.get("path", "Image")).name[:24] if it.get("type") == "image" else ICON_PRESETS.get(it.get("icon_key", ""), {}).get("name_ar" if is_ar else "name_en", "Icon")
                     rng = ("طوال الفيديو" if is_ar else "Full") if it.get("full_duration") else f"{float(it.get('start_sec', 0)):.1f}s–{float(it.get('end_sec', 5)):.1f}s"

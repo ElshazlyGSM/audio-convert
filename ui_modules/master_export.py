@@ -546,7 +546,13 @@ class MasterExportMixin:
 
             has_manual_trim = (start_seconds > 0) or (dur_seconds is not None)
             a1_muted = has_nle and (not self.nle_project.track_enabled.get("A1", True))
-            use_nle_clips = inc_timeline and (not has_manual_trim) and has_nle and (self.nle_project.has_timeline_cuts_or_clip_fx() or a1_muted)
+            export_audio_items = []
+            if has_nle and self.nle_project.track_enabled.get("A2", True):
+                export_audio_items = [
+                    copy.deepcopy(it) for it in getattr(self.nle_project, "audio_items", [])
+                    if it.get("enabled", True) and not it.get("muted", False)
+                ]
+            use_nle_clips = inc_timeline and (not has_manual_trim) and has_nle and (self.nle_project.has_timeline_cuts_or_clip_fx() or a1_muted or bool(export_audio_items))
             nle_clips = None
             if use_nle_clips:
                 self.nle_project.recompute_timeline()
@@ -983,6 +989,8 @@ class MasterExportMixin:
                         subtitle_config=clip_sub_cfg,
                         silence_config=silence_cfg,
                         nle_clips=pass_nle_clips,
+                        audio_items=export_audio_items,
+                        a1_muted=a1_muted,
                         audio_enhancement_filter=audio_fx_filter,
                         video_quality=quality,
                         video_codec=video_codec,
@@ -1077,6 +1085,8 @@ class MasterExportMixin:
                 subtitle_config=active_sub_cfg,
                 silence_config=silence_cfg,
                 nle_clips=nle_clips,
+                audio_items=export_audio_items,
+                a1_muted=a1_muted,
                 audio_enhancement_filter=audio_fx_filter,
                 video_quality=quality,
                 video_codec=video_codec,
