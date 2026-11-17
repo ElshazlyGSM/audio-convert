@@ -6337,6 +6337,11 @@ class SongCoverApp(
                 except Exception:
                     pass
 
+            if hasattr(self, "_sync_a1_audio_playback"):
+                self._sync_a1_audio_playback(tl_sec, self._is_playing())
+            if hasattr(self, "_sync_aux_audio_playback"):
+                self._sync_aux_audio_playback(tl_sec, self._is_playing())
+
         if clip is None:
             self._render_player_studio_canvas()
         else:
@@ -6446,6 +6451,10 @@ class SongCoverApp(
         self.trigger_step_autosave()
         if hasattr(self, "_apply_active_clip_playback_fx"):
             self._apply_active_clip_playback_fx()
+        if hasattr(self, "_sync_a1_audio_playback"):
+            self._sync_a1_audio_playback(self.nle_playhead_sec, self._is_playing())
+        if hasattr(self, "_sync_aux_audio_playback"):
+            self._sync_aux_audio_playback(self.nle_playhead_sec, self._is_playing())
 
         _c_idx, cur_clip, src_sec = self.nle_project.timeline_to_source(self.nle_playhead_sec)
         if cur_clip is None:

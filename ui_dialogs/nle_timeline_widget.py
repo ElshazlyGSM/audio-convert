@@ -2788,13 +2788,20 @@ class DaVinciTimelinePanel(ttk.Frame):
                     raw_a_s = max(0.0, self._drag_orig_audio_tl_s + dt_sec)
                     snapped_a_s, guide = self._snap_time(raw_a_s, ignore_ref=("A1_clip", idx))
                     self._snap_guide_sec = guide
-                    cl["audio_tl_start"] = round(snapped_a_s, 3)
-                    if "audio_tl_dur" not in cl:
-                        cl["audio_tl_dur"] = round(float(cl.get("tl_dur", cl["src_end"] - cl["src_start"])), 3)
-                    if "audio_src_start" not in cl:
-                        cl["audio_src_start"] = float(cl["src_start"])
-                    if "audio_src_end" not in cl:
-                        cl["audio_src_end"] = float(cl["src_end"])
+                    v_s = float(cl.get("tl_start", 0.0))
+                    if abs(snapped_a_s - v_s) <= 0.04:
+                        cl.pop("audio_tl_start", None)
+                        cl.pop("audio_tl_dur", None)
+                        cl.pop("audio_src_start", None)
+                        cl.pop("audio_src_end", None)
+                    else:
+                        cl["audio_tl_start"] = round(snapped_a_s, 3)
+                        if "audio_tl_dur" not in cl:
+                            cl["audio_tl_dur"] = round(float(cl.get("tl_dur", cl["src_end"] - cl["src_start"])), 3)
+                        if "audio_src_start" not in cl:
+                            cl["audio_src_start"] = float(cl["src_start"])
+                        if "audio_src_end" not in cl:
+                            cl["audio_src_end"] = float(cl["src_end"])
                     self.redraw()
                 elif kind == "V1_clip":
                     if cl.get("audio_tl_start") is None:
@@ -3225,6 +3232,13 @@ class DaVinciTimelinePanel(ttk.Frame):
                     m_lbl = ("🔊 تشغيل صوت هذا المقطع" if is_m else "🔇 كتم صوت هذا المقطع") if ar else ("🔊 Unmute Clip" if is_m else "🔇 Mute Clip")
                     menu.add_command(label=m_lbl, command=lambda: self._toggle_clip_mute(c_idx))
 
+                    has_a_offset = bool(self.nle.clips[c_idx].get("audio_tl_start") is not None)
+                    if has_a_offset:
+                        menu.add_command(
+                            label="🎯 " + ("إعادة محاذاة الصوت مع الفيديو تلقائياً" if ar else "Re-align Audio with Video"),
+                            command=lambda ci=c_idx: self._realign_clip_audio(ci),
+                        )
+
                     # Multi-selection merge (when multiple clips are selected via Ctrl/Shift+Click)
                     sel_indices = sorted(list(getattr(self, "selected_clip_indices", set())))
                     if len(sel_indices) > 1 and c_idx in sel_indices:
@@ -3326,6 +3340,19 @@ class DaVinciTimelinePanel(ttk.Frame):
             self.on_select(self.selected_ref)
             self.on_modified()
             self.redraw()
+
+    def _realign_clip_audio(self, clip_idx: int):
+        if 0 <= clip_idx < len(self.nle.clips):
+            self.nle.push_undo()
+            cl = self.nle.clips[clip_idx]
+            cl.pop("audio_tl_start", None)
+            cl.pop("audio_tl_dur", None)
+            cl.pop("audio_src_start", None)
+            cl.pop("audio_src_end", None)
+            self.on_modified()
+            self.redraw()
+            ar = self._is_ar()
+            self.show_hud_toast("🎯 تم إعادة محاذاة الصوت مع الفيديو بنجاح" if ar else "🎯 Audio re-aligned with video successfully")
 
     def _toggle_clip_mute(self, c_idx: int):
         if 0 <= c_idx < len(self.nle.clips):

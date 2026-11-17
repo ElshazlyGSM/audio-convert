@@ -143,35 +143,37 @@ class PlaybackSyncMixin:
         except Exception:
             pass
 
-        # VLC Volume with acoustic gain curve & definitive hardware mute
-        if is_muted:
-            eff_vol = 0
+        # If A1 audio track is shifted from video on timeline, media_player video output is unmuted for video,
+        # but its audio is muted so a1_audio_player handles the shifted audio cleanly
+        is_a1_shifted = self._is_a1_shifted()
+        if is_a1_shifted:
             try:
                 self.media_player.audio_set_mute(True)
             except Exception:
                 pass
         else:
+            if is_muted:
+                eff_vol = 0
+                try:
+                    self.media_player.audio_set_mute(True)
+                except Exception:
+                    pass
+            else:
+                try:
+                    self.media_player.audio_set_mute(False)
+                except Exception:
+                    pass
+                gain_mult = min(2.5, max(0.1, 10.0 ** (gain_db / 20.0))) if abs(gain_db) > 0.1 else 1.0
+                scale_factor = gain_mult if gain_mult < 1.0 else (1.0 + (gain_mult - 1.0) * 0.4)
+                eff_vol = int(max(0, min(200, round(base_vol * clip_vol * scale_factor))))
+
             try:
-                self.media_player.audio_set_mute(False)
+                self.media_player.audio_set_volume(eff_vol)
             except Exception:
                 pass
-            gain_mult = min(2.5, max(0.1, 10.0 ** (gain_db / 20.0))) if abs(gain_db) > 0.1 else 1.0
-            scale_factor = gain_mult if gain_mult < 1.0 else (1.0 + (gain_mult - 1.0) * 0.4)
-            eff_vol = int(max(0, min(200, round(base_vol * clip_vol * scale_factor))))
 
         try:
-            self.media_player.audio_set_volume(eff_vol)
-        except Exception:
-            pass
-
-        # Real-time hardware audio delay / advance in VLC
-        try:
-            if clip and clip.get("audio_tl_start") is not None:
-                offset_s = float(clip["audio_tl_start"]) - float(clip.get("tl_start", 0.0))
-                # VLC audio delay: positive value delays audio, negative advances audio (microseconds)
-                self.media_player.audio_set_delay(int(offset_s * 1_000_000))
-            else:
-                self.media_player.audio_set_delay(0)
+            self.media_player.audio_set_delay(0)
         except Exception:
             pass
 
@@ -284,6 +286,11 @@ class PlaybackSyncMixin:
         self._in_gap_playback = False
         if self.media_player and self.media_player.is_playing():
             self.media_player.pause()
+        if getattr(self, "a1_audio_player", None):
+            try:
+                self.a1_audio_player.pause()
+            except Exception:
+                pass
         if getattr(self, "aux_audio_player", None):
             try:
                 self.aux_audio_player.pause()
@@ -299,6 +306,12 @@ class PlaybackSyncMixin:
         self._cancel_playback_tick()
         if self.media_player:
             self.media_player.stop()
+        if getattr(self, "a1_audio_player", None):
+            try:
+                self.a1_audio_player.stop()
+                self._a1_loaded_path = None
+            except Exception:
+                pass
         if getattr(self, "aux_audio_player", None):
             try:
                 self.aux_audio_player.stop()
@@ -351,6 +364,8 @@ class PlaybackSyncMixin:
                 self.media_player.set_time(int(max(0.0, src_sec) * 1000))
                 self.media_player.play()
                 self._apply_active_clip_playback_fx(next_clip)
+                self._sync_aux_audio_playback(new_tl, True)
+                self._sync_a1_audio_playback(new_tl, True)
                 self._render_player_studio_canvas()
                 self._refresh_timeline_text()
                 self.playback_tick = self.after(33, self._schedule_playback_tick)
@@ -368,6 +383,8 @@ class PlaybackSyncMixin:
                 self.timeline_var.set(new_tl)
                 if hasattr(self, "davinci_timeline"):
                     self.davinci_timeline.set_playhead(new_tl, auto_follow=True)
+                self._sync_aux_audio_playback(new_tl, True)
+                self._sync_a1_audio_playback(new_tl, True)
                 self._render_player_studio_canvas()
                 self._refresh_timeline_text()
                 self.playback_tick = self.after(33, self._schedule_playback_tick)
@@ -454,6 +471,7 @@ class PlaybackSyncMixin:
                 self.davinci_timeline.set_playhead(tl_now, auto_follow=True)
 
             self._sync_aux_audio_playback(tl_now, True)
+            self._sync_a1_audio_playback(tl_now, True)
 
             th_dlg = getattr(self, "_theater_dialog", None)
             if th_dlg is not None and th_dlg.winfo_exists():
@@ -552,5 +570,124 @@ class PlaybackSyncMixin:
                 if not self.aux_audio_player.is_playing():
                     self.aux_audio_player.play()
             self.aux_audio_player.audio_set_volume(vol_pct)
+        except Exception:
+            pass
+
+    def _is_a1_shifted(self) -> bool:
+        if not hasattr(self, "nle_project") or not self.nle_project.clips:
+            return False
+        for c in self.nle_project.clips:
+            if c.get("audio_tl_start") is not None:
+                v_s = float(c.get("tl_start", 0.0))
+                a_s = float(c["audio_tl_start"])
+                if abs(a_s - v_s) > 0.04:
+                    return True
+        return False
+
+    def _sync_a1_audio_playback(self, tl_sec: float, is_playing: bool):
+        if not vlc or not getattr(self, "vlc_instance", None):
+            return
+        if not self._is_a1_shifted():
+            if getattr(self, "a1_audio_player", None) and self.a1_audio_player.is_playing():
+                try:
+                    self.a1_audio_player.pause()
+                except Exception:
+                    pass
+            # If media_player was muted because of previously shifted audio, unmute it now
+            if getattr(self, "media_player", None) and self.media_player.audio_get_mute():
+                self._apply_active_clip_playback_fx()
+            return
+
+        if not hasattr(self, "a1_audio_player") or self.a1_audio_player is None:
+            try:
+                self.a1_audio_player = self.vlc_instance.media_player_new()
+                self._a1_loaded_path = None
+            except Exception:
+                self.a1_audio_player = None
+                return
+
+        a1_on = self.nle_project.track_enabled.get("A1", True) if hasattr(self, "nle_project") else True
+        if not a1_on or not hasattr(self, "nle_project") or not self.nle_project.clips:
+            if self.a1_audio_player and self.a1_audio_player.is_playing():
+                try:
+                    self.a1_audio_player.pause()
+                except Exception:
+                    pass
+            return
+
+        active_c = None
+        for c in self.nle_project.clips:
+            a_s = float(c.get("audio_tl_start", c.get("tl_start", 0.0)))
+            a_dur = float(c.get("audio_tl_dur", float(c.get("tl_dur", 1.0))))
+            a_e = a_s + a_dur
+            if a_s <= tl_sec < a_e:
+                active_c = c
+                break
+
+        if not active_c or bool(active_c.get("muted", False)):
+            if self.a1_audio_player and self.a1_audio_player.is_playing():
+                try:
+                    self.a1_audio_player.pause()
+                except Exception:
+                    pass
+            return
+
+        p = str(active_c.get("file_path") or getattr(self.nle_project, "source_path_str", "") or getattr(self, "input_path", "")).strip()
+        if not p or not Path(p).is_file():
+            if self.a1_audio_player and self.a1_audio_player.is_playing():
+                try:
+                    self.a1_audio_player.pause()
+                except Exception:
+                    pass
+            return
+
+        a_s = float(active_c.get("audio_tl_start", active_c.get("tl_start", 0.0)))
+        clip_spd = max(0.25, float(active_c.get("speed", 1.0)))
+        base_spd = self.selected_playback_speed() if hasattr(self, "selected_playback_speed") else 1.0
+        eff_spd = max(0.25, min(4.0, base_spd * clip_spd))
+
+        a_src_offset = max(0.0, tl_sec - a_s) * clip_spd
+        a_src_start = float(active_c.get("audio_src_start", active_c["src_start"]))
+        target_ms = int(max(0.0, a_src_start + a_src_offset) * 1000)
+
+        base_v = float(self.volume_var.get()) if hasattr(self, "volume_var") else 100.0
+        clip_v = float(active_c.get("volume", 1.0))
+        gain_db = 0.0
+        try:
+            gain_db = float(self.boost_gain_var.get())
+        except Exception:
+            gain_db = 0.0
+        gain_mult = min(2.5, max(0.1, 10.0 ** (gain_db / 20.0))) if abs(gain_db) > 0.1 else 1.0
+        scale_factor = gain_mult if gain_mult < 1.0 else (1.0 + (gain_mult - 1.0) * 0.4)
+        vol_pct = max(0, min(200, int(round(base_v * clip_v * scale_factor))))
+
+        if not is_playing:
+            if self.a1_audio_player:
+                try:
+                    if self.a1_audio_player.is_playing():
+                        self.a1_audio_player.pause()
+                    if getattr(self, "_a1_loaded_path", None) == p:
+                        self.a1_audio_player.set_time(target_ms)
+                except Exception:
+                    pass
+            return
+
+        try:
+            if getattr(self, "_a1_loaded_path", None) != p:
+                media = self.vlc_instance.media_new(p)
+                media.add_option(":no-video")
+                self.a1_audio_player.set_media(media)
+                self.a1_audio_player.video_set_track(-1)
+                self._a1_loaded_path = p
+                self.a1_audio_player.play()
+                self.a1_audio_player.set_time(target_ms)
+            else:
+                cur_t = self.a1_audio_player.get_time()
+                if abs(cur_t - target_ms) > 280:
+                    self.a1_audio_player.set_time(target_ms)
+                if not self.a1_audio_player.is_playing():
+                    self.a1_audio_player.play()
+            self.a1_audio_player.set_rate(eff_spd)
+            self.a1_audio_player.audio_set_volume(vol_pct)
         except Exception:
             pass
