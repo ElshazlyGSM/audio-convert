@@ -2171,10 +2171,15 @@ class SongCoverApp(
         self.nle_v_paned = tk.PanedWindow(
             parent,
             orient="vertical",
-            sashwidth=5,
-            sashrelief="flat",
-            bg="#262c36",
-            bd=0,
+            sashwidth=8,
+            sashrelief="raised",
+            sashpad=1,
+            bg="#384152",
+            bd=1,
+            opaqueresize=True,
+            showhandle=True,
+            handlesize=10,
+            handlepad=12,
         )
         self.nle_v_paned.grid(row=0, column=0, sticky="nsew")
 
@@ -3630,7 +3635,7 @@ class SongCoverApp(
         )
         self.btn_master_export.grid(row=6, column=0, sticky="ew", pady=(2, 2))
 
-        self.nle_v_paned.add(top_workspace, minsize=295, stretch="always")
+        self.nle_v_paned.add(top_workspace, minsize=200, stretch="always")
 
         # ---------------- Bottom Pane: DaVinci Multi-Track NLE Timeline ----------------
         self.davinci_timeline = DaVinciTimelinePanel(
@@ -3645,7 +3650,7 @@ class SongCoverApp(
             on_export_clip=self.export_selected_clip_only,
             on_export_all_clips=self.export_all_clips_separately,
         )
-        self.nle_v_paned.add(self.davinci_timeline, minsize=200, stretch="never")
+        self.nle_v_paned.add(self.davinci_timeline, minsize=65, stretch="never")
         self.davinci_timeline.on_undo_request = self.do_app_undo
         self.davinci_timeline.on_redo_request = self.do_app_redo
         self.davinci_timeline.can_undo_fn = lambda: bool(self._app_undo_stack)

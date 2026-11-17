@@ -202,6 +202,11 @@ class DaVinciTimelinePanel(ttk.Frame):
         self._clipboard_items: List[Dict[str, Any]] = []
         self._clipboard_base_start: float = 0.0
 
+        # Vertical Track Scrolling State
+        self.v_scroll_px: float = 0.0
+        self.v_scroll: Optional[ttk.Scrollbar] = None
+        self._expanded_saved_h: Optional[int] = None
+
         self._build_ui()
 
     def _is_ar(self) -> bool:
@@ -216,22 +221,26 @@ class DaVinciTimelinePanel(ttk.Frame):
         return max(18, int(round(base_h * scale)))
 
     @property
+    def total_tracks_height(self) -> int:
+        return sum(self._get_track_height(t) for t in self.track_specs)
+
+    @property
     def total_canvas_height(self) -> int:
-        return self.RULER_H + sum(self._get_track_height(t) for t in self.track_specs) + 2
+        return self.RULER_H + self.total_tracks_height + 2
 
     def _track_y_bounds(self, track_key: str) -> Tuple[int, int]:
-        y = self.RULER_H
+        y = self.RULER_H - int(getattr(self, "v_scroll_px", 0.0))
         for tspec in self.track_specs:
             th = self._get_track_height(tspec)
             if tspec[0] == track_key:
                 return y, y + th
             y += th
-        return y, y + 24
+        return y, y + 32
 
     def _y_to_track(self, y: float) -> Optional[str]:
         if y < self.RULER_H:
             return "RULER"
-        cur_y = self.RULER_H
+        cur_y = self.RULER_H - int(getattr(self, "v_scroll_px", 0.0))
         for tspec in self.track_specs:
             th = self._get_track_height(tspec)
             if cur_y <= y < cur_y + th:
@@ -241,11 +250,12 @@ class DaVinciTimelinePanel(ttk.Frame):
 
     def _build_ui(self):
         self.columnconfigure(0, weight=1)
+        self.columnconfigure(1, weight=0)
         self.rowconfigure(1, weight=1)
 
         # ---------------- Row 0: DaVinci Resolve Edit Toolbar ----------------
         bar = tk.Frame(self, bg="#161920", padx=5, pady=3, highlightthickness=1, highlightbackground="#2b313d")
-        bar.grid(row=0, column=0, sticky="ew")
+        bar.grid(row=0, column=0, columnspan=2, sticky="ew")
 
         self.btn_tool_select = tk.Button(
             bar,
@@ -302,6 +312,7 @@ class DaVinciTimelinePanel(ttk.Frame):
         # Dynamic Tracks & Vertical Scale
         self.btn_add_track = self._mk_bar_btn(bar, self._show_add_track_menu, bg="#1d3042", fg="#79c0ff")
         self.btn_compact_tracks = self._mk_bar_btn(bar, self.toggle_compact_tracks, bg="#232834", fg="#c9d1d9")
+        self.btn_preset_2tracks = self._mk_bar_btn(bar, self.toggle_two_tracks_view, bg="#202a3a", fg="#79c0ff")
         self.btn_th_minus = self._mk_small_zoom_btn(bar, "↕️-", lambda: self.step_track_height(-0.15))
         self.btn_th_minus.pack(side="left", padx=1)
         self.btn_th_plus = self._mk_small_zoom_btn(bar, "↕️+", lambda: self.step_track_height(0.15))
@@ -385,6 +396,7 @@ class DaVinciTimelinePanel(ttk.Frame):
         add_tooltip(self.btn_shortcuts, "دليل اختصارات الكيبورد والتحكم", "Keyboard Shortcuts Guide")
         add_tooltip(self.btn_add_track, "إضافة مسار إضافي جديد", "Add Timeline Track")
         add_tooltip(self.btn_compact_tracks, "تبديل وضع العرض المضغوط / الموسع للطبقات", "Toggle Compact / Expanded Tracks")
+        add_tooltip(self.btn_preset_2tracks, "تبديل سريع بين وضع عرض طبقتين (تكبير الفيديو) وعرض كامل الطبقات", "Toggle 2-Tracks Compact / All-Tracks View")
         add_tooltip(self.btn_th_minus, "تصغير ارتفاع المسارات عمودياً", "Compact Track Height Vertically")
         add_tooltip(self.btn_th_plus, "تكبير ارتفاع المسارات عمودياً", "Expand Track Height Vertically")
         add_tooltip(self.chk_ripple, "تفعيل/تعطيل الضم التلقائي للمقاطع عند الحذف (Ripple)", "Toggle Ripple Delete")
@@ -419,7 +431,7 @@ class DaVinciTimelinePanel(ttk.Frame):
         self.lbl_zoom = tk.Label(bar, text="🔍 1x", bg="#161920", fg="#8b949e", font=("Consolas", 8))
         self.lbl_zoom.pack(side="right", padx=(3, 2))
 
-        # ---------------- Row 1: Multi-Track Canvas ----------------
+        # ---------------- Row 1: Multi-Track Canvas & Vertical Scrollbar ----------------
         self.canvas = tk.Canvas(
             self,
             height=self.total_canvas_height,
@@ -429,6 +441,9 @@ class DaVinciTimelinePanel(ttk.Frame):
         )
         self.canvas.grid(row=1, column=0, sticky="nsew")
         self._canvas_tip = _CanvasTooltipHelper(self.canvas, self._is_ar)
+
+        self.v_scroll = ttk.Scrollbar(self, orient="vertical", command=self._on_vscroll)
+        self.v_scroll.grid(row=1, column=1, sticky="ns")
 
         # ---------------- Row 2: Horizontal Scrollbar ----------------
         self.h_scroll = ttk.Scrollbar(self, orient="horizontal", command=self._on_hscroll)
@@ -443,6 +458,7 @@ class DaVinciTimelinePanel(ttk.Frame):
         self.canvas.bind("<Leave>", self._on_leave)
         self.canvas.bind("<Button-3>", self._on_right_click)
         self.canvas.bind("<MouseWheel>", self._on_plain_mousewheel)
+        self.canvas.bind("<Shift-MouseWheel>", self._on_hscroll_mousewheel)
         self.canvas.bind("<Alt-MouseWheel>", self._on_zoom_mousewheel)
         self.canvas.bind("<Control-MouseWheel>", self._on_zoom_mousewheel)
         self.canvas.bind("<Key>", self._on_canvas_key)
@@ -542,6 +558,13 @@ class DaVinciTimelinePanel(ttk.Frame):
                 self.btn_compact_tracks.configure(text="📐 تكبير الطبقات" if ar else "📐 Expand Tracks", bg="#3b2d18", fg="#ffd700")
             else:
                 self.btn_compact_tracks.configure(text="📐 تصغير الطبقات" if ar else "📐 Compact Tracks", bg="#232834", fg="#c9d1d9")
+        if hasattr(self, "btn_preset_2tracks"):
+            cur_h = self.winfo_height()
+            is_shrunk = (cur_h <= 165)
+            if is_shrunk:
+                self.btn_preset_2tracks.configure(text="↕️ " + ("كامل الطبقات" if ar else "All Tracks"), bg="#2e381f", fg="#7ee787")
+            else:
+                self.btn_preset_2tracks.configure(text="↕️ " + ("عرض طبقتين" if ar else "2-Tracks View"), bg="#202a3a", fg="#79c0ff")
         self.chk_ripple.configure(text="ضم تلقائي" if ar else "Ripple")
         self.btn_add_txt.configure(text="+ نص" if ar else "+ Text")
         self.btn_add_ico.configure(text="+ أيقونة" if ar else "+ Icon")
@@ -754,6 +777,34 @@ class DaVinciTimelinePanel(ttk.Frame):
             else:
                 self.btn_compact_tracks.configure(text="📐 " + ("تصغير الطبقات" if ar else "Compact Tracks"), bg="#232834", fg="#c9d1d9")
         self.redraw()
+
+    def toggle_two_tracks_view(self):
+        pw = self.master
+        if not isinstance(pw, tk.PanedWindow):
+            return
+        try:
+            pw_h = pw.winfo_height()
+            if pw_h < 150:
+                return
+            cur_h = self.winfo_height()
+            ar = self._is_ar()
+            if cur_h > 165:
+                self._expanded_saved_h = cur_h
+                target_tl_h = 135
+                target_sash_y = max(180, pw_h - target_tl_h)
+                pw.sash_place(0, 1, target_sash_y)
+                self.show_hud_toast("↕️ تم تقليص التايم لاين لعرض طبقتين وتكبير مساحة الفيديو" if ar else "↕️ Shrunk to 2-tracks view & expanded video")
+                if hasattr(self, "btn_preset_2tracks"):
+                    self.btn_preset_2tracks.configure(text="↕️ " + ("كامل الطبقات" if ar else "All Tracks"), bg="#2e381f", fg="#7ee787")
+            else:
+                target_tl_h = getattr(self, "_expanded_saved_h", None) or (self.total_canvas_height + 40)
+                target_sash_y = max(180, pw_h - int(target_tl_h))
+                pw.sash_place(0, 1, target_sash_y)
+                self.show_hud_toast("↕️ تم إظهار كامل الطبقات على التايم لاين" if ar else "↕️ Expanded to show all tracks")
+                if hasattr(self, "btn_preset_2tracks"):
+                    self.btn_preset_2tracks.configure(text="↕️ " + ("عرض طبقتين" if ar else "2-Tracks View"), bg="#202a3a", fg="#79c0ff")
+        except Exception:
+            pass
 
     def _sync_selection_refs(self):
         self.selected_clip_indices = {idx for (kind, idx) in self.selected_items if kind in ("clip", "V1_clip", "A1_clip")}
@@ -1028,6 +1079,43 @@ class DaVinciTimelinePanel(ttk.Frame):
             self.scroll_px = max(0.0, min(max_sc, self.scroll_px + amt * step))
         self.redraw()
 
+    def _on_vscroll(self, *args):
+        if not args:
+            return
+        ch = max(self.RULER_H + 20, self.canvas.winfo_height())
+        avail_tracks_h = max(20, ch - self.RULER_H)
+        tot_tracks_h = self.total_tracks_height
+        max_v_sc = max(0.0, float(tot_tracks_h - avail_tracks_h))
+        if max_v_sc <= 0:
+            return
+
+        cmd = args[0]
+        if cmd == "moveto" and len(args) > 1:
+            try:
+                frac = float(args[1])
+                self.v_scroll_px = max(0.0, min(max_v_sc, frac * tot_tracks_h))
+            except ValueError:
+                pass
+        elif cmd == "scroll" and len(args) > 2:
+            try:
+                cnt = int(args[1])
+                unit = args[2]
+                if unit.startswith("page"):
+                    delta = cnt * avail_tracks_h * 0.85
+                else:
+                    delta = cnt * 32.0
+                self.v_scroll_px = max(0.0, min(max_v_sc, self.v_scroll_px + delta))
+            except ValueError:
+                pass
+        self.redraw()
+
+    def _on_hscroll_mousewheel(self, event):
+        vw, tot_px = self._viewport_metrics()
+        max_sc = max(0.0, tot_px - vw)
+        delta_px = -65.0 if event.delta > 0 else 65.0
+        self.scroll_px = max(0.0, min(max_sc, self.scroll_px + delta_px))
+        self.redraw()
+
     def _is_zoom_wheel(self, event) -> bool:
         state = getattr(event, "state", 0)
         # Ctrl is 0x0004
@@ -1047,6 +1135,19 @@ class DaVinciTimelinePanel(ttk.Frame):
     def _on_plain_mousewheel(self, event):
         if self._is_zoom_wheel(event):
             self._on_zoom_mousewheel(event)
+            return
+
+        ch = max(self.RULER_H + 20, self.canvas.winfo_height())
+        avail_tracks_h = max(20, ch - self.RULER_H)
+        tot_tracks_h = self.total_tracks_height
+        max_v_sc = max(0.0, float(tot_tracks_h - avail_tracks_h))
+
+        is_shift = bool(event.state & 0x0001)
+        # Vertical track scrolling if over headers or if there is vertical overflow and not Shift
+        if event.x < self.HEADER_W or (max_v_sc > 0 and not is_shift):
+            delta = -32.0 if event.delta > 0 else 32.0
+            self.v_scroll_px = max(0.0, min(max_v_sc, getattr(self, "v_scroll_px", 0.0) + delta))
+            self.redraw()
         else:
             vw, tot_px = self._viewport_metrics()
             max_sc = max(0.0, tot_px - vw)
@@ -1643,26 +1744,6 @@ class DaVinciTimelinePanel(ttk.Frame):
             return f"{base}.{int(round(frac * 100)) % 100:02d}"
         return base
 
-    def _track_y_bounds(self, track_key: str) -> Tuple[int, int]:
-        y = self.RULER_H
-        for tspec in self.track_specs:
-            th = self._get_track_height(tspec)
-            if tspec[0] == track_key:
-                return y, y + th
-            y += th
-        return y, y + 32
-
-    def _y_to_track(self, y: float) -> Optional[str]:
-        if y < self.RULER_H:
-            return "RULER"
-        cur_y = self.RULER_H
-        for tspec in self.track_specs:
-            th = self._get_track_height(tspec)
-            if cur_y <= y < cur_y + th:
-                return tspec[0]
-            cur_y += th
-        return None
-
     # ------------------------------------------------------------------
     # Rendering (DaVinci Resolve Style)
     # ------------------------------------------------------------------
@@ -1677,17 +1758,30 @@ class DaVinciTimelinePanel(ttk.Frame):
         self._clear_trans_guides()
 
         cw = max(240, c.winfo_width())
-        ch = max(self.total_canvas_height, c.winfo_height())
+        ch = max(self.RULER_H + 20, c.winfo_height())
         ar = self._is_ar()
 
         self.nle.recompute_timeline()
         tot_dur = max(0.3, self.nle.total_duration)
         vw, tot_px = self._viewport_metrics()
 
-        # Sync scrollbar thumb
+        # Sync horizontal scrollbar thumb
         lo_frac = self.scroll_px / max(1.0, tot_px)
         hi_frac = min(1.0, (self.scroll_px + vw) / max(1.0, tot_px))
         self.h_scroll.set(lo_frac, hi_frac)
+
+        # Clamp & Sync vertical scrollbar thumb
+        tot_tracks_h = self.total_tracks_height
+        avail_tracks_h = max(20, ch - self.RULER_H)
+        max_v_sc = max(0.0, float(tot_tracks_h - avail_tracks_h))
+        self.v_scroll_px = max(0.0, min(max_v_sc, getattr(self, "v_scroll_px", 0.0)))
+        if hasattr(self, "v_scroll") and self.v_scroll:
+            if max_v_sc > 0:
+                v_lo = self.v_scroll_px / float(tot_tracks_h)
+                v_hi = min(1.0, (self.v_scroll_px + avail_tracks_h) / float(tot_tracks_h))
+                self.v_scroll.set(v_lo, v_hi)
+            else:
+                self.v_scroll.set(0.0, 1.0)
 
         # Update undo/redo & gaps visual state
         can_u = self.can_undo_fn() if (hasattr(self, "can_undo_fn") and callable(self.can_undo_fn)) else self.nle.can_undo()
@@ -1698,8 +1792,8 @@ class DaVinciTimelinePanel(ttk.Frame):
         self.btn_close_gaps.configure(fg="#79c0ff" if has_gaps else "#555d69")
 
         # 1. Background Track Lanes
-        c.create_rectangle(0, 0, cw, self.RULER_H, fill="#181c24", outline="")
-        cur_y = self.RULER_H
+        c.create_rectangle(self.HEADER_W, self.RULER_H, cw, ch, fill="#11141a", outline="")
+        cur_y = self.RULER_H - int(self.v_scroll_px)
         for idx, tspec in enumerate(self.track_specs):
             th = self._get_track_height(tspec)
             tkey = tspec[0]
@@ -1709,10 +1803,11 @@ class DaVinciTimelinePanel(ttk.Frame):
                 lane_bg = "#0d0f13"
             elif is_locked:
                 lane_bg = "#19150f"
-            c.create_rectangle(self.HEADER_W, cur_y, cw, cur_y + th, fill=lane_bg, outline="")
-            if is_locked:
-                c.create_text(cw - 12, cur_y + th // 2, text="🔒", fill="#e3b341", anchor="e", font=("Segoe UI", 8))
-            c.create_line(0, cur_y + th, cw, cur_y + th, fill="#242a35", width=1)
+            if cur_y + th > self.RULER_H and cur_y < ch:
+                c.create_rectangle(self.HEADER_W, cur_y, cw, cur_y + th, fill=lane_bg, outline="")
+                if is_locked:
+                    c.create_text(cw - 12, cur_y + th // 2, text="🔒", fill="#e3b341", anchor="e", font=("Segoe UI", 8))
+                c.create_line(0, cur_y + th, cw, cur_y + th, fill="#242a35", width=1)
             cur_y += th
 
         # 2. Adaptive High-Zoom Timecode Ruler Ticks & Vertical Grid Lines
@@ -1732,25 +1827,16 @@ class DaVinciTimelinePanel(ttk.Frame):
         t_val = first_tick
         tc_prec = "hundredth" if major_step < 0.1 else ("tenth" if major_step < 1.0 else "sec")
         tick_guard = 0
+        ruler_ticks_info = []
         while t_val <= end_vis_s + 1e-6 and tick_guard < 450:
             tick_guard += 1
             tx = self._sec_to_x(t_val, tot_dur, tot_px)
             if self.HEADER_W <= tx <= cw:
                 is_major = abs(round(t_val / major_step) * major_step - t_val) < (minor_step * 0.20)
                 if is_major:
-                    c.create_line(tx, self.RULER_H - 9, tx, self.RULER_H, fill="#8b949e", width=1)
-                    c.create_line(tx, self.RULER_H, tx, cur_y, fill="#1d222c", width=1)
-                    c.create_text(
-                        tx + 3, 4,
-                        text=self._fmt_tc(t_val, tc_prec),
-                        anchor="nw",
-                        fill="#9ca3af",
-                        font=("Consolas", 8),
-                    )
-                else:
-                    c.create_line(tx, self.RULER_H - 4, tx, self.RULER_H, fill="#484f58", width=1)
+                    c.create_line(tx, self.RULER_H, tx, max(ch, cur_y), fill="#1d222c", width=1)
+                ruler_ticks_info.append((tx, is_major, t_val, tc_prec))
             t_val += minor_step
-        c.create_line(0, self.RULER_H, cw, self.RULER_H, fill="#30363d", width=1)
 
         # 3. Draw Overlay Tracks (V4, V3, V2, and any dynamic extra tracks)
         for tspec in self.track_specs:
@@ -2078,21 +2164,10 @@ class DaVinciTimelinePanel(ttk.Frame):
         self._blade_box_id = c.create_rectangle(0, 0, 10, 10, fill="#2b2300", outline="#ffd700", state="hidden")
         self._blade_txt_id = c.create_text(0, 0, text="", anchor="w", fill="#ffd700", font=("Consolas", 8, "bold"), state="hidden")
 
-        # 7. Pinned Left Track Headers Column + Per-Track [+] Action Buttons
-        c.create_rectangle(0, 0, self.HEADER_W, ch, fill="#191d26", outline="")
-        c.create_line(self.HEADER_W, 0, self.HEADER_W, ch, fill="#343b48", width=1)
+        # 7. Left Track Headers Column (scrolls vertically with tracks)
+        c.create_rectangle(0, self.RULER_H, self.HEADER_W, ch, fill="#191d26", outline="")
 
-        # Top-Left Timecode Box
-        c.create_rectangle(2, 2, self.HEADER_W - 3, self.RULER_H - 2, fill="#101319", outline="#2b313d")
-        self._tc_text_id = c.create_text(
-            self.HEADER_W // 2,
-            self.RULER_H // 2,
-            text=self._fmt_tc(self.playhead_sec, "tenth"),
-            fill="#ff5533",
-            font=("Consolas", 9, "bold"),
-        )
-
-        hy = self.RULER_H
+        hy = self.RULER_H - int(self.v_scroll_px)
         for tspec in self.track_specs:
             tkey = tspec[0]
             th = self._get_track_height(tspec)
@@ -2102,50 +2177,84 @@ class DaVinciTimelinePanel(ttk.Frame):
             lbl_en = tspec[5]
             act_sym = tspec[6]
             en = self.nle.track_enabled.get(tkey, True)
-            c.create_rectangle(0, hy, self.HEADER_W, hy + th, fill="#1a1f29" if en else "#12151c", outline="")
-            c.create_rectangle(0, hy + 1, 4, hy + th - 1, fill=col_body if en else "#30363d", outline="")
-            c.create_line(0, hy + th, self.HEADER_W, hy + th, fill="#282f3c", width=1)
+            if hy + th > self.RULER_H and hy < ch:
+                c.create_rectangle(0, hy, self.HEADER_W, hy + th, fill="#1a1f29" if en else "#12151c", outline="")
+                c.create_rectangle(0, hy + 1, 4, hy + th - 1, fill=col_body if en else "#30363d", outline="")
+                c.create_line(0, hy + th, self.HEADER_W, hy + th, fill="#282f3c", width=1)
 
-            # Eye / Speaker toggle box (x: 6..34) - Much larger, vibrant, and ultra-visible!
-            is_audio_t = (tkey in ("A1", "A2") or tkey.startswith("AUD"))
-            toggle_icon = ("🔊" if en else "🔇") if is_audio_t else ("👁" if en else "🚫")
-            bh = min(22, max(14, th - 4))
-            box_x0, box_x1 = 6, 34
-            box_y0, box_y1 = hy + (th // 2) - bh // 2, hy + (th // 2) + bh // 2
-            
-            if is_audio_t:
-                box_bg = "#153a22" if en else "#5c1d1d"
-                box_border = "#2ea043" if en else "#f85149"
-                icon_fg = "#3fb950" if en else "#ffffff"
-            else:
-                box_bg = "#1c2838" if en else "#441c1c"
-                box_border = "#388bfd" if en else "#da3633"
-                icon_fg = "#58a6ff" if en else "#ff7b72"
+                # Eye / Speaker toggle box (x: 6..34)
+                is_audio_t = (tkey in ("A1", "A2") or tkey.startswith("AUD"))
+                toggle_icon = ("🔊" if en else "🔇") if is_audio_t else ("👁" if en else "🚫")
+                bh = min(22, max(14, th - 4))
+                box_x0, box_x1 = 6, 34
+                box_y0, box_y1 = hy + (th // 2) - bh // 2, hy + (th // 2) + bh // 2
 
-            c.create_rectangle(box_x0, box_y0, box_x1, box_y1, fill=box_bg, outline=box_border, width=1)
-            c.create_text((box_x0 + box_x1) // 2, hy + th // 2, text=toggle_icon, fill=icon_fg, font=("Segoe UI Emoji", 9 if th < 26 else 10, "bold"))
+                if is_audio_t:
+                    box_bg = "#153a22" if en else "#5c1d1d"
+                    box_border = "#2ea043" if en else "#f85149"
+                    icon_fg = "#3fb950" if en else "#ffffff"
+                else:
+                    box_bg = "#1c2838" if en else "#441c1c"
+                    box_border = "#388bfd" if en else "#da3633"
+                    icon_fg = "#58a6ff" if en else "#ff7b72"
 
-            # Track title
-            t_label = lbl_ar if ar else lbl_en
-            f_sz = 7 if th < 24 else 8
-            c.create_text(38, hy + th // 2, text=t_label, anchor="w", fill="#e6edf3" if en else "#8b949e", font=("Segoe UI", f_sz, "bold"))
+                c.create_rectangle(box_x0, box_y0, box_x1, box_y1, fill=box_bg, outline=box_border, width=1)
+                c.create_text((box_x0 + box_x1) // 2, hy + th // 2, text=toggle_icon, fill=icon_fg, font=("Segoe UI Emoji", 9 if th < 26 else 10, "bold"))
 
-            # Lock / Unlock toggle box (x: HEADER_W - 44 .. HEADER_W - 24)
-            is_locked = bool(hasattr(self.nle, "is_track_locked") and self.nle.is_track_locked(tkey))
-            lx0, lx1 = self.HEADER_W - 44, self.HEADER_W - 24
-            ly0, ly1 = hy + (th // 2) - bh // 2, hy + (th // 2) + bh // 2
-            c.create_rectangle(lx0, ly0, lx1, ly1, fill="#382b14" if is_locked else "#202530", outline="#e3b341" if is_locked else "#384152")
-            c.create_text((lx0 + lx1) // 2, hy + th // 2, text="🔒" if is_locked else "🔓", fill="#ffd700" if is_locked else "#6e7681", font=("Segoe UI", 7 if th < 24 else 8))
+                # Track title
+                t_label = lbl_ar if ar else lbl_en
+                f_sz = 7 if th < 24 else 8
+                c.create_text(38, hy + th // 2, text=t_label, anchor="w", fill="#e6edf3" if en else "#8b949e", font=("Segoe UI", f_sz, "bold"))
 
-            # Per-Track Quick Add / Split Button (x: HEADER_W-22 .. HEADER_W-5)
-            bx0, bx1 = self.HEADER_W - 22, self.HEADER_W - 5
-            by0, by1 = hy + (th // 2) - bh // 2, hy + (th // 2) + bh // 2
-            c.create_rectangle(bx0, by0, bx1, by1, fill=col_hdr if en else "#252a34", outline="#485266")
-            c.create_text((bx0 + bx1) // 2, hy + th // 2, text=act_sym, fill="#ffffff", font=("Segoe UI", f_sz, "bold"))
+                # Lock / Unlock toggle box (x: HEADER_W - 44 .. HEADER_W - 24)
+                is_locked = bool(hasattr(self.nle, "is_track_locked") and self.nle.is_track_locked(tkey))
+                lx0, lx1 = self.HEADER_W - 44, self.HEADER_W - 24
+                ly0, ly1 = hy + (th // 2) - bh // 2, hy + (th // 2) + bh // 2
+                c.create_rectangle(lx0, ly0, lx1, ly1, fill="#382b14" if is_locked else "#202530", outline="#e3b341" if is_locked else "#384152")
+                c.create_text((lx0 + lx1) // 2, hy + th // 2, text="🔒" if is_locked else "🔓", fill="#ffd700" if is_locked else "#6e7681", font=("Segoe UI", 7 if th < 24 else 8))
+
+                # Per-Track Quick Add / Split Button (x: HEADER_W-22 .. HEADER_W-5)
+                bx0, bx1 = self.HEADER_W - 22, self.HEADER_W - 5
+                by0, by1 = hy + (th // 2) - bh // 2, hy + (th // 2) + bh // 2
+                c.create_rectangle(bx0, by0, bx1, by1, fill=col_hdr if en else "#252a34", outline="#485266")
+                c.create_text((bx0 + bx1) // 2, hy + th // 2, text=act_sym, fill="#ffffff", font=("Segoe UI", f_sz, "bold"))
             hy += th
 
-        # 8. DaVinci Resolve Red Playhead (persistent IDs for O(1) playback updates)
-        self._playhead_line_id = c.create_line(0, 12, 0, cur_y, fill="#ff2e2e", width=2, state="hidden")
+        c.create_line(self.HEADER_W, self.RULER_H, self.HEADER_W, ch, fill="#343b48", width=1)
+
+        # 8. Pinned Top Ruler & Top-Left Timecode Header (PINNED ON TOP)
+        c.create_rectangle(self.HEADER_W, 0, cw, self.RULER_H, fill="#181c24", outline="")
+        c.create_line(self.HEADER_W, self.RULER_H, cw, self.RULER_H, fill="#343b48", width=1)
+
+        for tx, is_major, t_val, tc_prec in ruler_ticks_info:
+            if is_major:
+                c.create_line(tx, self.RULER_H - 9, tx, self.RULER_H, fill="#8b949e", width=1)
+                c.create_text(
+                    tx + 3, 4,
+                    text=self._fmt_tc(t_val, tc_prec),
+                    anchor="nw",
+                    fill="#9ca3af",
+                    font=("Consolas", 8),
+                )
+            else:
+                c.create_line(tx, self.RULER_H - 4, tx, self.RULER_H, fill="#484f58", width=1)
+
+        # Top-Left Timecode Box
+        c.create_rectangle(0, 0, self.HEADER_W, self.RULER_H, fill="#191d26", outline="")
+        c.create_rectangle(2, 2, self.HEADER_W - 3, self.RULER_H - 2, fill="#101319", outline="#2b313d")
+        self._tc_text_id = c.create_text(
+            self.HEADER_W // 2,
+            self.RULER_H // 2,
+            text=self._fmt_tc(self.playhead_sec, "tenth"),
+            fill="#ff5533",
+            font=("Consolas", 9, "bold"),
+        )
+        c.create_line(self.HEADER_W, 0, self.HEADER_W, self.RULER_H, fill="#343b48", width=1)
+        c.create_line(0, self.RULER_H, self.HEADER_W, self.RULER_H, fill="#343b48", width=1)
+
+        # 9. DaVinci Resolve Red Playhead (persistent IDs for O(1) playback updates)
+        tracks_bottom_y = max(ch, cur_y)
+        self._playhead_line_id = c.create_line(0, 12, 0, tracks_bottom_y, fill="#ff2e2e", width=2, state="hidden")
         self._playhead_cap_id = c.create_polygon(
             [0, 1, 14, 1, 14, 10, 7, 17, 0, 10],
             fill="#ff2e2e",
@@ -2153,7 +2262,7 @@ class DaVinciTimelinePanel(ttk.Frame):
             width=1,
             state="hidden",
         )
-        self._cached_metrics = (tot_dur, tot_px, self.scroll_px, cw, cur_y)
+        self._cached_metrics = (tot_dur, tot_px, self.scroll_px, cw, tracks_bottom_y)
         self._update_playhead_fast()
         self._update_blade_preview_fast()
 
