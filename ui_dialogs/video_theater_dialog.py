@@ -475,11 +475,8 @@ class VideoTheaterDialog(tk.Toplevel):
             else (0, None, tl_sec)
         )
         frame = getattr(self.app, "_cached_player_frame", None)
-        if frame is None:
-            if not self.app._is_playing() and hasattr(self.app, "fast_preview"):
-                frame = self.app.fast_preview.get_frame(vpath, src_sec, max_dim=960)
-            elif hasattr(self.app, "_request_fast_preview_frame"):
-                self.app._request_fast_preview_frame(src_sec)
+        if frame is None and hasattr(self.app, "_request_fast_preview_frame"):
+            self.app._request_fast_preview_frame(src_sec)
 
         if frame is not None:
             src_aspect = frame.width / max(1, frame.height)

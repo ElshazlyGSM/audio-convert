@@ -576,6 +576,116 @@ TRANSITION_PRESETS: Dict[str, Dict[str, Any]] = {
         "default_duration": 0.4,
         "is_popular": False,
     },
+    "coverup": {
+        "key": "coverup",
+        "label_ar": "تغطية صاعدة لأعلى (Cover Up)",
+        "label_en": "Cover Up",
+        "category": "motion",
+        "icon": "⬆",
+        "desc_ar": "المشهد الجديد يصعد للأعلى مغطياً المشهد السابق بنعومة",
+        "desc_en": "Incoming clip slides upward covering the current clip",
+        "default_duration": 0.5,
+        "is_popular": False,
+    },
+    "coverdown": {
+        "key": "coverdown",
+        "label_ar": "تغطية هابطة لأسفل (Cover Down)",
+        "label_en": "Cover Down",
+        "category": "motion",
+        "icon": "⬇",
+        "desc_ar": "المشهد الجديد يهبط من الأعلى مغطياً المشهد السابق بنعومة",
+        "desc_en": "Incoming clip slides downward covering current clip",
+        "default_duration": 0.5,
+        "is_popular": False,
+    },
+    "revealup": {
+        "key": "revealup",
+        "label_ar": "كشف صاعد لأعلى (Reveal Up)",
+        "label_en": "Reveal Up",
+        "category": "motion",
+        "icon": "🚀",
+        "desc_ar": "المشهد الحالي يرتفع كاشفاً المشهد الجديد تحته كستارة",
+        "desc_en": "Outgoing clip slides upward revealing incoming clip",
+        "default_duration": 0.5,
+        "is_popular": False,
+    },
+    "revealdown": {
+        "key": "revealdown",
+        "label_ar": "كشف هابط لأسفل (Reveal Down)",
+        "label_en": "Reveal Down",
+        "category": "motion",
+        "icon": "🪂",
+        "desc_ar": "المشهد الحالي يهبط كاشفاً المشهد الجديد تحته",
+        "desc_en": "Outgoing clip slides downward revealing incoming clip",
+        "default_duration": 0.5,
+        "is_popular": False,
+    },
+    "wipetl": {
+        "key": "wipetl",
+        "label_ar": "مسح قطري أعلى اليسار (Wipe Top-Left)",
+        "label_en": "Wipe Top-Left",
+        "category": "wipe",
+        "icon": "↖",
+        "desc_ar": "مسح قطري يبدأ من زاوية أعلى اليسار نحو أسفل اليمين",
+        "desc_en": "Diagonal wipe starting from top-left corner",
+        "default_duration": 0.5,
+        "is_popular": False,
+    },
+    "wipetr": {
+        "key": "wipetr",
+        "label_ar": "مسح قطري أعلى اليمين (Wipe Top-Right)",
+        "label_en": "Wipe Top-Right",
+        "category": "wipe",
+        "icon": "↗",
+        "desc_ar": "مسح قطري يبدأ من زاوية أعلى اليمين نحو أسفل اليسار",
+        "desc_en": "Diagonal wipe starting from top-right corner",
+        "default_duration": 0.5,
+        "is_popular": False,
+    },
+    "wipebl": {
+        "key": "wipebl",
+        "label_ar": "مسح قطري أسفل اليسار (Wipe Bottom-Left)",
+        "label_en": "Wipe Bottom-Left",
+        "category": "wipe",
+        "icon": "↙",
+        "desc_ar": "مسح قطري يبدأ من زاوية أسفل اليسار نحو أعلى اليمين",
+        "desc_en": "Diagonal wipe starting from bottom-left corner",
+        "default_duration": 0.5,
+        "is_popular": False,
+    },
+    "wipebr": {
+        "key": "wipebr",
+        "label_ar": "مسح قطري أسفل اليمين (Wipe Bottom-Right)",
+        "label_en": "Wipe Bottom-Right",
+        "category": "wipe",
+        "icon": "↘",
+        "desc_ar": "مسح قطري يبدأ من زاوية أسفل اليمين نحو أعلى اليسار",
+        "desc_en": "Diagonal wipe starting from bottom-right corner",
+        "default_duration": 0.5,
+        "is_popular": False,
+    },
+    "diagtr": {
+        "key": "diagtr",
+        "label_ar": "قطري نحو أعلى اليمين (Diagonal TR)",
+        "label_en": "Diagonal Top-Right",
+        "category": "wipe",
+        "icon": "↗",
+        "desc_ar": "خط قطري مائل يفتح نحو أعلى اليمين",
+        "desc_en": "Diagonal transition towards top-right",
+        "default_duration": 0.5,
+        "is_popular": False,
+    },
+    "diagbl": {
+        "key": "diagbl",
+        "label_ar": "قطري نحو أسفل اليسار (Diagonal BL)",
+        "label_en": "Diagonal Bottom-Left",
+        "category": "wipe",
+        "icon": "↙",
+        "desc_ar": "خط قطري مائل يفتح نحو أسفل اليسار",
+        "desc_en": "Diagonal transition towards bottom-left",
+        "default_duration": 0.5,
+        "is_popular": False,
+    },
 }
 
 
@@ -673,11 +783,21 @@ def render_simulated_transition_frame(
         out.paste(img_b, (0, -h + shift_y))
         return out
 
-    # 8. Cover Left
+    # 8. Cover Left / Up / Down
     if trans_key == "coverleft":
         out = img_a.copy()
         shift_x = int((1.0 - t) * w)
         out.paste(img_b, (shift_x, 0))
+        return out
+    if trans_key == "coverup":
+        out = img_a.copy()
+        shift_y = int((1.0 - t) * h)
+        out.paste(img_b, (0, shift_y))
+        return out
+    if trans_key == "coverdown":
+        out = img_a.copy()
+        shift_y = int((t - 1.0) * h)
+        out.paste(img_b, (0, shift_y))
         return out
 
     # 9. Cover Right
@@ -687,11 +807,21 @@ def render_simulated_transition_frame(
         out.paste(img_b, (shift_x, 0))
         return out
 
-    # 10. Reveal Left
+    # 10. Reveal Left / Up / Down
     if trans_key == "revealleft":
         out = img_b.copy()
         shift_x = int(t * w)
         out.paste(img_a, (-shift_x, 0))
+        return out
+    if trans_key == "revealup":
+        out = img_b.copy()
+        shift_y = int(t * h)
+        out.paste(img_a, (0, -shift_y))
+        return out
+    if trans_key == "revealdown":
+        out = img_b.copy()
+        shift_y = int(t * h)
+        out.paste(img_a, (0, shift_y))
         return out
 
     # 11. Reveal Right
@@ -700,6 +830,10 @@ def render_simulated_transition_frame(
         shift_x = int(t * w)
         out.paste(img_a, (shift_x, 0))
         return out
+
+    # Diagonal wipes fallback / simulation
+    if trans_key in ("wipetl", "wipetr", "wipebl", "wipebr", "diagtr", "diagbl"):
+        return Image.blend(img_a, img_b, t)
 
     # 12. Wipe Left
     if trans_key == "wipeleft":

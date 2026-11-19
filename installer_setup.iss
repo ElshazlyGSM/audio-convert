@@ -39,8 +39,10 @@ AllowNoIcons=yes
 OutputDir=setup_output
 OutputBaseFilename=ClipCraft_Studio_Setup_v1.0
 SetupIconFile=app_icon.ico
-Compression=lzma2/ultra64
+Compression=lzma2/max
 SolidCompression=yes
+LZMAUseSeparateProcess=yes
+LZMANumBlockThreads=4
 WizardStyle=modern
 
 ; Language selection dialog at startup

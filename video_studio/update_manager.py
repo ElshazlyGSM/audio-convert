@@ -485,7 +485,10 @@ class UpdateDialog(tk.Toplevel):
     def _launch_installer_and_exit(self, installer_path: Path):
         try:
             if installer_path.exists():
-                subprocess.Popen([str(installer_path)], shell=True)
+                if sys.platform.startswith("win"):
+                    os.startfile(str(installer_path))
+                else:
+                    subprocess.Popen([str(installer_path)])
         except Exception:
             pass
 

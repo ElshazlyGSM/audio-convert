@@ -167,6 +167,7 @@ class DaVinciTimelinePanel(ttk.Frame):
         self.selected_ref: Optional[Tuple[str, int]] = None
         self.selected_clip_indices: set = set()
         self.waveform_peaks: Optional[List[float]] = None
+        self.waveform_duration: float = 0.0
         self.silence_intervals: Optional[List[Dict[str, Any]]] = None
 
         # Fast O(1) canvas item IDs & cached geometry for zero-lag playback/hover
@@ -196,6 +197,8 @@ class DaVinciTimelinePanel(ttk.Frame):
         self._hover_blade_sec: Optional[float] = None
         self._snap_guide_sec: Optional[float] = None
         self._item_hit_boxes: List[Tuple[str, int, float, float, float, float]] = []
+        self._anim_hit_boxes: List[Tuple[str, str, int, float, float, float, float, float, float]] = []
+        self._drag_anim_orig_dur: float = 0.5
         self._gap_hit_boxes: List[Tuple[float, float, float, float]] = []
         self._cut_hit_boxes: List[Tuple[int, float, float, float, float, bool, str, float]] = []
         self._trans_guide_ids: List[int] = []
@@ -807,7 +810,7 @@ class DaVinciTimelinePanel(ttk.Frame):
             pass
 
     def _sync_selection_refs(self):
-        self.selected_clip_indices = {idx for (kind, idx) in self.selected_items if kind in ("clip", "V1_clip", "A1_clip")}
+        self.selected_clip_indices = {it[1] for it in self.selected_items if len(it) == 2 and it[0] in ("clip", "V1_clip", "A1_clip")}
         if self.selected_items:
             if self.selected_ref not in self.selected_items:
                 self.selected_ref = next(iter(self.selected_items))
@@ -897,7 +900,11 @@ class DaVinciTimelinePanel(ttk.Frame):
 
         c = self.canvas
         px = self.HEADER_W + (self.playhead_sec / tot_dur) * tot_px - cached_scroll
-        c.itemconfigure(self._tc_text_id, text=self._fmt_tc(self.playhead_sec, "tenth"))
+        prec = "hundredth" if (tot_px / tot_dur) >= 120 else "tenth"
+        tc_text = self._fmt_tc(self.playhead_sec, prec)
+        if getattr(self, "_last_playhead_tc", None) != tc_text:
+            self._last_playhead_tc = tc_text
+            c.itemconfigure(self._tc_text_id, text=tc_text)
         if self.HEADER_W <= px <= cw:
             c.coords(self._playhead_line_id, px, 12, px, tracks_bottom_y)
             c.coords(
@@ -952,9 +959,10 @@ class DaVinciTimelinePanel(ttk.Frame):
         if auto_follow:
             vw, tot_px = self._viewport_metrics()
             px = (self.playhead_sec / tot) * tot_px
-            if px < self.scroll_px or px > self.scroll_px + vw - 20:
-                new_sc = max(0.0, min(max(0.0, tot_px - vw), px - vw * 0.20))
-                if abs(new_sc - self.scroll_px) > 0.5:
+            margin_right = max(32.0, vw * 0.10)
+            if px < self.scroll_px or px > self.scroll_px + vw - margin_right:
+                new_sc = max(0.0, min(max(0.0, tot_px - vw), px - vw * 0.15))
+                if abs(new_sc - self.scroll_px) > 1.0:
                     self.scroll_px = new_sc
                     scrolled = True
         if scrolled or not self._update_playhead_fast():
@@ -1232,10 +1240,38 @@ class DaVinciTimelinePanel(ttk.Frame):
             return
         targets = unlocked_targets
 
+        # Check if any target is an animation rectangle:
+        anim_targets = [it for it in targets if len(it) == 3 and it[0] in ("anim_in", "anim_out")]
+        if anim_targets:
+            self.nle.push_undo()
+            for anim_side, tkey, idx in anim_targets:
+                t_list = self.nle.get_track_list(tkey)
+                if 0 <= idx < len(t_list):
+                    t_list[idx][anim_side] = "none"
+                    side_lbl = "حركة الدخول" if anim_side == "anim_in" else "حركة الخروج"
+                    self.show_hud_toast(f"🗑️ تم حذف {side_lbl} بنجاح" if ar else f"🗑️ Removed {anim_side} animation successfully")
+                self.selected_ref = (tkey, idx)
+                self.selected_items = {self.selected_ref}
+            self.on_modified()
+            self._sync_selection_refs()
+            app = self._get_app()
+            if app:
+                if hasattr(app, "_save_settings"):
+                    app._save_settings()
+                if hasattr(app, "_update_inspector_properties"):
+                    app._update_inspector_properties()
+                if hasattr(app, "_render_player_studio_canvas"):
+                    app._render_player_studio_canvas()
+            self.redraw()
+            return
+
         self.nle.push_undo()
         by_track: Dict[str, List[int]] = {}
         clip_indices: List[int] = []
-        for kind, idx in targets:
+        for it in targets:
+            if len(it) != 2:
+                continue
+            kind, idx = it
             if kind in ("clip", "V1_clip"):
                 clip_indices.append(idx)
             elif kind == "A1_clip":
@@ -1276,6 +1312,7 @@ class DaVinciTimelinePanel(ttk.Frame):
         targets = set(self.selected_items) if self.selected_items else (set([self.selected_ref]) if self.selected_ref else set())
         if not targets:
             return
+        targets = {(it[1], it[2]) if len(it) == 3 else it for it in targets}
         self.nle.push_undo()
         new_targets = set()
         # Duplicate overlay items
@@ -1314,6 +1351,7 @@ class DaVinciTimelinePanel(ttk.Frame):
         if not targets:
             self.show_hud_toast("⚠️ لا يوجد عناصر محددة لنسخها" if self._is_ar() else "⚠️ No items selected to copy")
             return
+        targets = {(it[1], it[2]) if len(it) == 3 else it for it in targets}
         items = []
         for kind, idx in sorted(targets, key=lambda x: (x[0], x[1])):
             if kind in ("clip", "V1_clip", "A1_clip"):
@@ -1753,6 +1791,7 @@ class DaVinciTimelinePanel(ttk.Frame):
         c = self.canvas
         c.delete("all")
         self._item_hit_boxes.clear()
+        self._anim_hit_boxes.clear()
         self._gap_hit_boxes.clear()
         self._cut_hit_boxes.clear()
         self._clear_trans_guides()
@@ -1870,6 +1909,60 @@ class DaVinciTimelinePanel(ttk.Frame):
                 c.create_rectangle(dx0, y0 + 2, dx1, y1 - 2, fill=fill_c, outline=out_c, width=2 if is_sel else 1)
                 if (y1 - y0) >= 22:
                     c.create_rectangle(dx0 + 1, y0 + 3, dx1 - 1, y0 + 8, fill=hdr_c, outline="")
+
+                # Draw In-Animation & Out-Animation Transition blocks on Clip
+                if not is_full:
+                    anim_in = str(it.get("anim_in", "none") or "none").lower()
+                    anim_out = str(it.get("anim_out", "none") or "none").lower()
+                    dur_in = float(it.get("anim_dur_in", it.get("anim_dur", 0.5)) or 0.5)
+                    dur_out = float(it.get("anim_dur_out", it.get("anim_dur", 0.5)) or 0.5)
+                    c_dur = max(0.1, e_sec - s_sec)
+                    dur_in = min(dur_in, c_dur * 0.48)
+                    dur_out = min(dur_out, c_dur * 0.48)
+
+                    if anim_in != "none":
+                        in_x1 = self._sec_to_x(s_sec + dur_in, tot_dur, tot_px)
+                        ax0 = dx0
+                        ax1 = min(dx1 - 4, max(dx0 + 8, in_x1))
+                        if ax1 > ax0:
+                            is_in_sel = (self.selected_ref == ("anim_in", tkey, idx)) or (("anim_in", tkey, idx) in getattr(self, "selected_items", set()))
+                            fill_c = "#d97706" if is_in_sel else "#b45309"
+                            outl_c = "#ffffff" if is_in_sel else "#f59e0b"
+                            w_line = 2 if is_in_sel else 1
+                            # Amber transition rectangle
+                            c.create_rectangle(ax0, y0 + 2, ax1, y1 - 2, fill=fill_c, outline=outl_c, width=w_line)
+                            c.create_rectangle(ax0 + 1, y0 + 3, ax1 - 1, min(y1 - 2, y0 + 6), fill="#fde68a", outline="")
+                            c.create_line(ax1, y0 + 2, ax1, y1 - 2, fill="#ffffff" if is_in_sel else "#fef08a", width=2)
+                            bead_fill = "#ffffff" if is_in_sel else "#fef08a"
+                            bead_r = 4 if is_in_sel else 3
+                            c.create_oval(ax1 - bead_r, (y0 + y1) // 2 - bead_r, ax1 + bead_r, (y0 + y1) // 2 + bead_r, fill=bead_fill, outline="#78350f")
+                            if is_in_sel:
+                                c.create_rectangle(ax0 - 1, y0, ax1 + 1, y1, outline="#fde047", width=1, dash=(3, 2))
+                            if (ax1 - ax0) >= 18:
+                                c.create_text(ax0 + 4, (y0 + y1) // 2, text="▶", anchor="w", fill="#ffffff" if is_in_sel else "#fef08a", font=("Segoe UI", 7, "bold"))
+                            self._anim_hit_boxes.append(("anim_in", tkey, idx, ax0, ax1, y0 + 1, y1 - 1, s_sec, e_sec))
+
+                    if anim_out != "none":
+                        out_px0 = self._sec_to_x(e_sec - dur_out, tot_dur, tot_px)
+                        bx0 = max(dx0 + 4, min(dx1 - 8, out_px0))
+                        bx1 = dx1
+                        if bx1 > bx0:
+                            is_out_sel = (self.selected_ref == ("anim_out", tkey, idx)) or (("anim_out", tkey, idx) in getattr(self, "selected_items", set()))
+                            fill_c = "#dc2626" if is_out_sel else "#991b1b"
+                            outl_c = "#ffffff" if is_out_sel else "#f87171"
+                            w_line = 2 if is_out_sel else 1
+                            # Crimson transition rectangle
+                            c.create_rectangle(bx0, y0 + 2, bx1, y1 - 2, fill=fill_c, outline=outl_c, width=w_line)
+                            c.create_rectangle(bx0 + 1, y0 + 3, bx1 - 1, min(y1 - 2, y0 + 6), fill="#fecaca", outline="")
+                            c.create_line(bx0, y0 + 2, bx0, y1 - 2, fill="#ffffff" if is_out_sel else "#fecaca", width=2)
+                            bead_fill = "#ffffff" if is_out_sel else "#fecaca"
+                            bead_r = 4 if is_out_sel else 3
+                            c.create_oval(bx0 - bead_r, (y0 + y1) // 2 - bead_r, bx0 + bead_r, (y0 + y1) // 2 + bead_r, fill=bead_fill, outline="#7f1d1d")
+                            if is_out_sel:
+                                c.create_rectangle(bx0 - 1, y0, bx1 + 1, y1, outline="#fca5a5", width=1, dash=(3, 2))
+                            if (bx1 - bx0) >= 18:
+                                c.create_text(bx1 - 4, (y0 + y1) // 2, text="◀", anchor="e", fill="#ffffff" if is_out_sel else "#fecaca", font=("Segoe UI", 7, "bold"))
+                            self._anim_hit_boxes.append(("anim_out", tkey, idx, bx0, bx1, y0 + 1, y1 - 1, s_sec, e_sec))
 
                 if ttype == "audio_item" or tkey == "A2" or tkey.startswith("AUD"):
                     item_w = dx1 - dx0
@@ -2035,9 +2128,12 @@ class DaVinciTimelinePanel(ttk.Frame):
                     full_clip_w = max(1.0, ax1 - ax0)
                     vol_mul = min(1.5, float(clip.get("volume", 1.0)))
 
-                    step_px = 1 if px_span <= 1800 else 2
+                    step_px = 1
                     top_pts = []
                     bot_pts = []
+
+                    wf_dur = float(getattr(self, "waveform_duration", 0.0) or getattr(peaks, "duration", 0.0) or 0.0)
+                    wf_total = wf_dur if wf_dur > 0.1 else src_total
 
                     for bx in range(int(a_dx0 + 1), int(a_dx1 - 1), step_px):
                         rel_frac0 = max(0.0, min(1.0, (bx - ax0) / full_clip_w))
@@ -2047,23 +2143,30 @@ class DaVinciTimelinePanel(ttk.Frame):
                         if t1 < t0:
                             t0, t1 = t1, t0
 
-                        if n_peaks > 0 and src_total > 0:
-                            p0 = int((t0 / src_total) * n_peaks)
-                            p1 = int((t1 / src_total) * n_peaks)
-                            if p1 <= p0:
-                                idx_p = min(n_peaks - 1, max(0, p0))
-                                amp = peaks[idx_p]
-                            else:
-                                sub = peaks[max(0, p0): min(n_peaks, p1 + 1)]
+                        if n_peaks > 0 and wf_total > 0:
+                            float_pos0 = max(0.0, min(float(n_peaks - 1), (t0 / wf_total) * (n_peaks - 1)))
+                            float_pos1 = max(0.0, min(float(n_peaks - 1), (t1 / wf_total) * (n_peaks - 1)))
+                            ip0 = int(float_pos0)
+                            ip1 = int(float_pos1)
+                            if ip1 > ip0:
+                                sub = peaks[max(0, ip0): min(n_peaks, ip1 + 1)]
                                 amp = max(sub) if sub else 0.0
+                            elif 0 <= ip0 < n_peaks:
+                                if ip0 + 1 < n_peaks:
+                                    frac = float_pos0 - ip0
+                                    amp = (1.0 - frac) * peaks[ip0] + frac * peaks[ip0 + 1]
+                                else:
+                                    amp = peaks[ip0]
+                            else:
+                                amp = 0.0
                         else:
                             amp = 0.0
 
                         amp = min(1.0, max(0.0, amp * vol_mul))
-                        if amp <= 0.005:
+                        if amp <= 0.001:
                             bh = 0.0
                         else:
-                            bh = max(1.2, min(wf_half, amp * wf_half))
+                            bh = max(1.0, min(wf_half, amp * wf_half))
 
                         top_pts.append((bx, wf_mid - bh))
                         bot_pts.append((bx, wf_mid + bh))
@@ -2398,6 +2501,9 @@ class DaVinciTimelinePanel(ttk.Frame):
     def _is_item_track_locked(self, target: Optional[Tuple[str, int]]) -> bool:
         if not target or not isinstance(target, tuple):
             return False
+        if len(target) == 3 and target[0] in ("anim_in", "anim_out"):
+            tkey = target[1]
+            return bool(hasattr(self.nle, "is_track_locked") and self.nle.is_track_locked(tkey))
         kind, _ = target
         tkey = "V1" if kind in ("clip", "V1_clip") else ("A1" if kind == "A1_clip" else kind)
         return bool(hasattr(self.nle, "is_track_locked") and self.nle.is_track_locked(tkey))
@@ -2508,8 +2614,8 @@ class DaVinciTimelinePanel(ttk.Frame):
         self._drag_ref_tot_px = tot_px
         px = self._sec_to_x(self.playhead_sec, tot_dur, tot_px)
 
-        # 2. Ruler or Playhead Cap -> Scrub Playhead (O(1) update)
-        if my <= self.RULER_H or (my <= self.RULER_H + 6 and abs(mx - px) <= 9):
+        # 2. Ruler or Red Playhead Needle -> Scrub Playhead (O(1) update)
+        if my <= self.RULER_H or abs(mx - px) <= 8:
             self._drag_action = "scrub"
             sec = self._x_to_sec(mx)
             self.playhead_sec = sec
@@ -2572,6 +2678,40 @@ class DaVinciTimelinePanel(ttk.Frame):
             self.on_scrub(sec, True)
             self.redraw()
             return
+
+        # 4c. Check Animation Handle & Block click for selection and drag resize
+        for a_type, tkey, idx, ax0, ax1, y0, y1, s_sec, e_sec in self._anim_hit_boxes:
+            if y0 <= my <= y1:
+                if a_type == "anim_in" and (ax0 - 2 <= mx <= ax1 + 6):
+                    self._drag_action = "resize_anim_in"
+                    self._drag_target = (tkey, idx)
+                    self._drag_start_x = mx
+                    self._drag_moved = False
+                    t_list = self.nle.get_track_list(tkey)
+                    if 0 <= idx < len(t_list):
+                        it = t_list[idx]
+                        self._drag_anim_orig_dur = float(it.get("anim_dur_in", it.get("anim_dur", 0.5)) or 0.5)
+                        self.selected_ref = ("anim_in", tkey, idx)
+                        self.selected_items = {self.selected_ref}
+                        self._sync_selection_refs()
+                        self.on_select(self.selected_ref)
+                        self.redraw()
+                    return
+                elif a_type == "anim_out" and (ax0 - 6 <= mx <= ax1 + 2):
+                    self._drag_action = "resize_anim_out"
+                    self._drag_target = (tkey, idx)
+                    self._drag_start_x = mx
+                    self._drag_moved = False
+                    t_list = self.nle.get_track_list(tkey)
+                    if 0 <= idx < len(t_list):
+                        it = t_list[idx]
+                        self._drag_anim_orig_dur = float(it.get("anim_dur_out", it.get("anim_dur", 0.5)) or 0.5)
+                        self.selected_ref = ("anim_out", tkey, idx)
+                        self.selected_items = {self.selected_ref}
+                        self._sync_selection_refs()
+                        self.on_select(self.selected_ref)
+                        self.redraw()
+                    return
 
         # 5. Select Mode -> Hit test clips & overlays
         hit_ref, part = self._hit_test(mx, my)
@@ -2662,6 +2802,7 @@ class DaVinciTimelinePanel(ttk.Frame):
             self._marquee_start_y = my
             self._drag_start_x = mx
             sec = self._x_to_sec(max(self.HEADER_W, mx))
+            self.playhead_sec = sec
             self.redraw()
             self.on_scrub(sec, False)
 
@@ -2675,6 +2816,35 @@ class DaVinciTimelinePanel(ttk.Frame):
         dx_px = mx - self._drag_start_x
         if abs(dx_px) > 3 or abs(event.y - getattr(self, "_drag_start_y", event.y)) > 3:
             self._drag_moved = True
+
+        if self._drag_action in ("resize_anim_in", "resize_anim_out"):
+            if not self._undo_pushed_for_drag:
+                self.nle.push_undo()
+                self._undo_pushed_for_drag = True
+            tkey, idx = self._drag_target
+            tlist = self.nle.get_track_list(tkey)
+            if 0 <= idx < len(tlist):
+                it = tlist[idx]
+                s_sec = float(it.get("start_sec", 0.0))
+                e_sec = float(it.get("end_sec", s_sec + 5.0))
+                max_dur = max(0.15, (e_sec - s_sec) * 0.48)
+                px_per_sec = max(1.0, self._drag_ref_tot_px / max(0.1, self._drag_ref_tot_dur))
+                dt = dx_px / px_per_sec
+
+                if self._drag_action == "resize_anim_in":
+                    new_d = round(max(0.10, min(max_dur, min(3.0, self._drag_anim_orig_dur + dt))), 2)
+                    it["anim_dur"] = new_d
+                    it["anim_dur_in"] = new_d
+                else:
+                    new_d = round(max(0.10, min(max_dur, min(3.0, self._drag_anim_orig_dur - dt))), 2)
+                    it["anim_dur"] = new_d
+                    it["anim_dur_out"] = new_d
+
+                self.redraw()
+                ar = self._is_ar()
+                side_str = "الدخول" if self._drag_action == "resize_anim_in" else "الخروج"
+                self.show_hud_toast(f"⏱ مدة حركة {side_str}: {new_d:.2f}s" if ar else f"⏱ Animation Duration: {new_d:.2f}s")
+            return
 
         if self._drag_action == "reorder_track":
             dest_tkey = self._y_to_track(event.y)
@@ -2943,6 +3113,19 @@ class DaVinciTimelinePanel(ttk.Frame):
         self._drag_action = None
         self._snap_guide_sec = None
 
+        if act in ("resize_anim_in", "resize_anim_out"):
+            self.on_modified()
+            self._sync_selection_refs()
+            app = self._get_app()
+            if app and hasattr(app, "_save_settings"):
+                app._save_settings()
+            if app and hasattr(app, "_update_inspector_properties"):
+                app._update_inspector_properties()
+            if app and hasattr(app, "_render_player_studio_canvas"):
+                app._render_player_studio_canvas()
+            self.redraw()
+            return
+
         if act == "reorder_track":
             self.canvas.delete("reorder_guide")
             self.canvas.configure(cursor="arrow")
@@ -3139,6 +3322,34 @@ class DaVinciTimelinePanel(ttk.Frame):
                 tip.show(txt_ar, txt_en, event.x_root, event.y_root)
             return
 
+        # 5b. Check Animation Transition Handles (Entrance & Exit)
+        for a_type, tkey, idx, ax0, ax1, y0, y1, s_sec, e_sec in self._anim_hit_boxes:
+            if y0 <= my <= y1:
+                if a_type == "anim_in" and (abs(mx - ax1) <= 7 or ax0 <= mx <= ax1):
+                    self.canvas.configure(cursor="sb_h_double_arrow")
+                    t_list = self.nle.get_track_list(tkey)
+                    if 0 <= idx < len(t_list):
+                        it = t_list[idx]
+                        cur_dur = float(it.get("anim_dur_in", it.get("anim_dur", 0.5)) or 0.5)
+                        p_name = it.get("anim_in", "none")
+                        txt_ar = f"↔️ تعديل مدة حركة الدخول ({cur_dur:.2f}s) [{p_name}]\n💡 اضغط واسحب لتطويل أو تقصير مدة حركة الدخول"
+                        txt_en = f"↔️ Resize Entrance Animation ({cur_dur:.2f}s) [{p_name}]\n💡 Click & drag to lengthen or shorten transition"
+                        if tip:
+                            tip.show(txt_ar, txt_en, event.x_root, event.y_root)
+                    return
+                elif a_type == "anim_out" and (abs(mx - ax0) <= 7 or ax0 <= mx <= ax1):
+                    self.canvas.configure(cursor="sb_h_double_arrow")
+                    t_list = self.nle.get_track_list(tkey)
+                    if 0 <= idx < len(t_list):
+                        it = t_list[idx]
+                        cur_dur = float(it.get("anim_dur_out", it.get("anim_dur", 0.5)) or 0.5)
+                        p_name = it.get("anim_out", "none")
+                        txt_ar = f"↔️ تعديل مدة حركة الخروج ({cur_dur:.2f}s) [{p_name}]\n💡 اضغط واسحب لتطويل أو تقصير مدة حركة الخروج"
+                        txt_en = f"↔️ Resize Exit Animation ({cur_dur:.2f}s) [{p_name}]\n💡 Click & drag to lengthen or shorten transition"
+                        if tip:
+                            tip.show(txt_ar, txt_en, event.x_root, event.y_root)
+                    return
+
         # 6. Check Clips and Overlay Items
         hit_ref, part = self._hit_test(mx, my)
         if hit_ref:
@@ -3280,11 +3491,24 @@ class DaVinciTimelinePanel(ttk.Frame):
             self._show_cut_transition_menu(event, cut_idx, has_cut_trans, t_key, t_dur)
             return
         click_sec = self._x_to_sec(mx)
-        hit_ref, _ = self._hit_test(mx, my)
-        if hit_ref:
-            self.selected_ref = hit_ref
-            self.on_select(hit_ref)
+        anim_hit = None
+        if getattr(self, "_anim_hit_boxes", None):
+            for side, atkey, aidx, hx0, hx1, hy0, hy1, _as, _ae in self._anim_hit_boxes:
+                if hy0 <= my <= hy1 and (hx0 - 2) <= mx <= (hx1 + 2):
+                    anim_hit = (side, atkey, aidx)
+                    break
+        if anim_hit:
+            self.selected_ref = anim_hit
+            self.selected_items = {anim_hit}
+            self.on_select(anim_hit)
             self.redraw()
+        else:
+            hit_ref, _ = self._hit_test(mx, my)
+            if hit_ref:
+                self.selected_ref = hit_ref
+                self.selected_items = {hit_ref}
+                self.on_select(hit_ref)
+                self.redraw()
 
         ar = self._is_ar()
         menu = tk.Menu(self, tearoff=0)
@@ -3388,6 +3612,218 @@ class DaVinciTimelinePanel(ttk.Frame):
                             label="📂 " + (f"تصدير جميع المقاطع كلٌ في ملف مستقل ({len(self.nle.clips)} مقاطع)..." if ar else f"Export All Clips Separately ({len(self.nle.clips)} clips)..."),
                             command=self.on_export_all_clips,
                         )
+            elif self.selected_ref and len(self.selected_ref) == 3 and self.selected_ref[0] in ("anim_in", "anim_out"):
+                anim_side, tkey, o_idx = self.selected_ref
+                tlist = self.nle.get_track_list(tkey) if hasattr(self, "nle") else []
+                if 0 <= o_idx < len(tlist):
+                    ov_item = tlist[o_idx]
+                    is_in = (anim_side == "anim_in")
+                    side_lbl = "حركة الدخول" if is_in else "حركة الخروج"
+                    menu.add_separator()
+
+                    # 1. Preset change submenu
+                    sub_menu = tk.Menu(menu, tearoff=0)
+                    presets_list = [
+                        ("tilt_slide_up", "📐 انزلاق مائل لأعلى (مثل العينة)" if ar else "📐 Tilted Slide Up"),
+                        ("tilt_slide_down", "📐 انزلاق مائل لأسفل" if ar else "📐 Tilted Slide Down"),
+                        ("slide_up", "⬆ انزلاق لأعلى" if ar else "⬆ Slide Up"),
+                        ("slide_down", "⬇ انزلاق لأسفل" if ar else "⬇ Slide Down"),
+                        ("slide_left", "⬅ انزلاق يسار" if ar else "⬅ Slide Left"),
+                        ("slide_right", "➡ انزلاق يمين" if ar else "➡ Slide Right"),
+                        ("float_in", "🎈 طفو ناعم" if ar else "🎈 Float In"),
+                        ("fade", "💫 تلاشي Fade" if ar else "💫 Fade"),
+                        ("bounce", "🏀 قفز مطاطي Bounce" if ar else "🏀 Elastic Bounce"),
+                        ("pop", "💥 وثب سريع Pop" if ar else "💥 Pop / Snap"),
+                        ("zoom_in", "🔍 تكبير Zoom In" if ar else "🔍 Zoom In"),
+                        ("zoom_out", "🔎 هبوط من كبير" if ar else "🔎 Zoom In Large"),
+                        ("dramatic_zoom", "🎬 زوم سينمائي" if ar else "🎬 Dramatic Zoom"),
+                        ("spin_in", "🌪 دوران Spin 360°" if ar else "🌪 Spin In"),
+                        ("drop_in", "🪂 سقوط جاذبية" if ar else "🪂 Gravity Drop"),
+                        ("flash", "⚡ وميض فلاش" if ar else "⚡ Flash"),
+                        ("glitch", "📺 اهتزاز جليتش" if ar else "📺 Glitch Shake"),
+                        ("none", "🚫 بدون حركة" if ar else "🚫 None"),
+                    ] if is_in else [
+                        ("slide_down", "⬇ انزلاق لأسفل (مثل العينة)" if ar else "⬇ Slide Down"),
+                        ("slide_up", "⬆ انزلاق لأعلى" if ar else "⬆ Slide Up"),
+                        ("slide_left", "⬅ انزلاق يسار" if ar else "⬅ Slide Left"),
+                        ("slide_right", "➡ انزلاق يمين" if ar else "➡ Slide Right"),
+                        ("tilt_slide_down", "📐 خروج مائل لأسفل" if ar else "📐 Tilted Slide Down"),
+                        ("fade", "💫 تلاشي Fade" if ar else "💫 Fade"),
+                        ("shrink", "🤏 انكماش Shrink" if ar else "🤏 Shrink Out"),
+                        ("zoom_out", "🔍 زوم واختفاء" if ar else "🔍 Zoom Out"),
+                        ("spin_out", "🌪 دوران Spin 360°" if ar else "🌪 Spin Out"),
+                        ("drop_out", "🪂 سقوط لأسفل" if ar else "🪂 Gravity Drop"),
+                        ("flash", "⚡ وميض فلاش" if ar else "⚡ Flash Out"),
+                        ("none", "🚫 بدون حركة" if ar else "🚫 None"),
+                    ]
+
+                    cur_p = str(ov_item.get(anim_side, "none"))
+                    for pk, pl in presets_list:
+                        chk = "✓ " if cur_p == pk else "   "
+                        def _set_p(k=pk):
+                            self.nle.push_undo()
+                            ov_item[anim_side] = k
+                            ov_item["full_duration"] = False
+                            self.on_modified()
+                            app = self._get_app()
+                            if app:
+                                if hasattr(app, "_save_settings"):
+                                    app._save_settings()
+                                if hasattr(app, "_update_inspector_properties"):
+                                    app._update_inspector_properties()
+                                if hasattr(app, "_render_player_studio_canvas"):
+                                    app._render_player_studio_canvas()
+                            self.redraw()
+                        sub_menu.add_command(label=f"{chk}{pl}", command=_set_p)
+
+                    menu.add_cascade(label=f"✨ تغيير {side_lbl}" if ar else f"✨ Change {anim_side}", menu=sub_menu)
+
+                    # 2. Preview
+                    def _anim_preview_now():
+                        cur_s = float(ov_item.get("start_sec", 0.0) or 0.0)
+                        cur_e = float(ov_item.get("end_sec", cur_s + 5.0) or (cur_s + 5.0))
+                        dur = float(ov_item.get("anim_dur_in" if is_in else "anim_dur_out", ov_item.get("anim_dur", 0.5)) or 0.5)
+                        t_pt = max(0.0, cur_s - 0.05) if is_in else max(0.0, cur_e - dur - 0.20)
+                        self.playhead_sec = t_pt
+                        self.redraw()
+                        self.on_scrub(self.playhead_sec, True)
+                        app = self._get_app()
+                        if app and hasattr(app, "play_playback"):
+                            app.play_playback()
+                            self.after(int(max(800, (dur + 0.6) * 1000)), lambda: getattr(app, "pause_playback", lambda: None)())
+
+                    menu.add_command(label="▶ " + ("معاينة هذه الحركة فوراً" if ar else "Preview Animation Now"), command=_anim_preview_now)
+
+                    # 3. Delete this animation
+                    def _del_anim_right_click():
+                        self.nle.push_undo()
+                        ov_item[anim_side] = "none"
+                        self.selected_ref = (tkey, o_idx)
+                        self.selected_items = {self.selected_ref}
+                        self.on_modified()
+                        self._sync_selection_refs()
+                        app = self._get_app()
+                        if app:
+                            if hasattr(app, "_save_settings"):
+                                app._save_settings()
+                            if hasattr(app, "_update_inspector_properties"):
+                                app._update_inspector_properties()
+                            if hasattr(app, "_render_player_studio_canvas"):
+                                app._render_player_studio_canvas()
+                        self.redraw()
+                        self.show_hud_toast(f"🗑️ تم حذف {side_lbl} بنجاح" if ar else f"🗑️ Removed {side_lbl} successfully")
+
+                    menu.add_separator()
+                    menu.add_command(
+                        label="🗑️ " + (f"إزالة {side_lbl} (حذف التأثير فقط)" if ar else f"Delete {side_lbl} Only"),
+                        command=_del_anim_right_click,
+                    )
+                    menu.add_command(
+                        label="⬅ " + ("تحديد العنصر بالكامل" if ar else "Select Whole Overlay"),
+                        command=lambda: (setattr(self, "selected_ref", (tkey, o_idx)), setattr(self, "selected_items", {(tkey, o_idx)}), self.on_select((tkey, o_idx)), self.redraw()),
+                    )
+            elif self.selected_ref and (self.selected_ref[0] in ("V2", "V3", "V4") or str(self.selected_ref[0]).startswith("TXT") or str(self.selected_ref[0]).startswith("LOG")):
+                tkey = self.selected_ref[0]
+                o_idx = self.selected_ref[1]
+                tlist = self.nle.get_track_list(tkey) if hasattr(self, "nle") else []
+                if 0 <= o_idx < len(tlist):
+                    ov_item = tlist[o_idx]
+                    menu.add_separator()
+
+                    # 1. In-Animation Submenu
+                    menu_in = tk.Menu(menu, tearoff=0)
+                    in_presets = [
+                        ("tilt_slide_up", "📐 انزلاق مائل لأعلى (مثل العينة)" if ar else "📐 Tilted Slide Up"),
+                        ("tilt_slide_down", "📐 انزلاق مائل لأسفل" if ar else "📐 Tilted Slide Down"),
+                        ("slide_up", "⬆ انزلاق لأعلى" if ar else "⬆ Slide Up"),
+                        ("slide_down", "⬇ انزلاق لأسفل" if ar else "⬇ Slide Down"),
+                        ("slide_left", "⬅ انزلاق يسار" if ar else "⬅ Slide Left"),
+                        ("slide_right", "➡ انزلاق يمين" if ar else "➡ Slide Right"),
+                        ("float_in", "🎈 طفو ناعم" if ar else "🎈 Float In"),
+                        ("fade", "💫 تلاشي Fade" if ar else "💫 Fade"),
+                        ("bounce", "🏀 قفز مطاطي Bounce" if ar else "🏀 Elastic Bounce"),
+                        ("pop", "💥 وثب سريع Pop" if ar else "💥 Pop / Snap"),
+                        ("zoom_in", "🔍 تكبير من الصفر" if ar else "🔍 Zoom In"),
+                        ("zoom_out", "🔎 هبوط من كبير" if ar else "🔎 Zoom In Large"),
+                        ("dramatic_zoom", "🎬 زوم سينمائي" if ar else "🎬 Dramatic Zoom"),
+                        ("spin_in", "🌪 دوران Spin 360°" if ar else "🌪 Spin In"),
+                        ("drop_in", "🪂 سقوط جاذبية" if ar else "🪂 Gravity Drop"),
+                        ("flash", "⚡ وميض فلاش" if ar else "⚡ Flash"),
+                        ("glitch", "📺 اهتزاز جليتش" if ar else "📺 Glitch Shake"),
+                        ("none", "🚫 بدون حركة دخول" if ar else "🚫 None"),
+                    ]
+
+                    def _set_tl_in(pk):
+                        self.nle.push_undo()
+                        ov_item["anim_in"] = pk
+                        ov_item["full_duration"] = False
+                        self.on_modified()
+                        app = self._get_app()
+                        if app:
+                            if hasattr(app, "_save_settings"):
+                                app._save_settings()
+                            if hasattr(app, "_update_inspector_properties"):
+                                app._update_inspector_properties()
+                            if hasattr(app, "_render_player_studio_canvas"):
+                                app._render_player_studio_canvas()
+                        self.redraw()
+
+                    cur_in = str(ov_item.get("anim_in", "none"))
+                    for pk, pl in in_presets:
+                        chk = "✓ " if cur_in == pk else "   "
+                        menu_in.add_command(label=f"{chk}{pl}", command=lambda k=pk: _set_tl_in(k))
+                    menu.add_cascade(label="✨ " + ("تأثير حركة الدخول (In-Animation)" if ar else "Entrance Animation"), menu=menu_in)
+
+                    # 2. Out-Animation Submenu
+                    menu_out = tk.Menu(menu, tearoff=0)
+                    out_presets = [
+                        ("slide_down", "⬇ انزلاق لأسفل (مثل العينة)" if ar else "⬇ Slide Down"),
+                        ("slide_up", "⬆ انزلاق لأعلى" if ar else "⬆ Slide Up"),
+                        ("slide_left", "⬅ انزلاق يسار" if ar else "⬅ Slide Left"),
+                        ("slide_right", "➡ انزلاق يمين" if ar else "➡ Slide Right"),
+                        ("tilt_slide_down", "📐 خروج مائل لأسفل" if ar else "📐 Tilted Slide Down"),
+                        ("fade", "💫 تلاشي Fade" if ar else "💫 Fade"),
+                        ("shrink", "🤏 انكماش Shrink" if ar else "🤏 Shrink Out"),
+                        ("zoom_out", "🔍 زوم واختفاء" if ar else "🔍 Zoom Out"),
+                        ("spin_out", "🌪 دوران Spin 360°" if ar else "🌪 Spin Out"),
+                        ("drop_out", "🪂 سقوط لأسفل" if ar else "🪂 Gravity Drop"),
+                        ("flash", "⚡ وميض فلاش" if ar else "⚡ Flash Out"),
+                        ("none", "🚫 بدون حركة خروج" if ar else "🚫 None"),
+                    ]
+
+                    def _set_tl_out(pk):
+                        self.nle.push_undo()
+                        ov_item["anim_out"] = pk
+                        ov_item["full_duration"] = False
+                        self.on_modified()
+                        app = self._get_app()
+                        if app:
+                            if hasattr(app, "_save_settings"):
+                                app._save_settings()
+                            if hasattr(app, "_update_inspector_properties"):
+                                app._update_inspector_properties()
+                            if hasattr(app, "_render_player_studio_canvas"):
+                                app._render_player_studio_canvas()
+                        self.redraw()
+
+                    cur_out = str(ov_item.get("anim_out", "none"))
+                    for pk, pl in out_presets:
+                        chk = "✓ " if cur_out == pk else "   "
+                        menu_out.add_command(label=f"{chk}{pl}", command=lambda k=pk: _set_tl_out(k))
+                    menu.add_cascade(label="✨ " + ("تأثير حركة الخروج (Out-Animation)" if ar else "Exit Animation"), menu=menu_out)
+
+                    # 3. Quick Preview
+                    def _tl_quick_preview():
+                        s_v = float(ov_item.get("start_sec", 0.0) or 0.0)
+                        self.playhead_sec = max(0.0, s_v - 0.05)
+                        self.redraw()
+                        self.on_scrub(self.playhead_sec, True)
+                        app = self._get_app()
+                        if app and hasattr(app, "play_playback"):
+                            app.play_playback()
+                            self.after(1400, lambda: getattr(app, "pause_playback", lambda: None)())
+
+                    menu.add_command(label="▶ " + ("معاينة الحركة فوراً" if ar else "Preview Animation Now"), command=_tl_quick_preview)
             menu.add_command(
                 label="🗑️ " + ("حذف المحدد" if ar else "Delete Selected"),
                 command=self.delete_selected,

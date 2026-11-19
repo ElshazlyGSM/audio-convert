@@ -31,64 +31,181 @@ import convert
 
 def evaluate_item_animation(item: dict, current_tl_sec: float, ref_box_w: int = 1080, ref_box_h: int = 1920) -> tuple:
     """
-    Evaluates in/out animation for an overlay item at a given timeline time.
-    Returns (opacity_mult, offset_x_px, offset_y_px, scale_mult).
+    Evaluates in/out animation for an overlay item (Image, Icon, Text, Logo) at timeline time.
+    Returns (opacity_mult, offset_x_px, offset_y_px, scale_mult, rotation_deg).
+    Supports 18 entrance presets and 12 exit presets with smooth cubic easing and spring dynamics.
     """
     anim_in = str(item.get("anim_in", "none") or "none").lower()
     anim_out = str(item.get("anim_out", "none") or "none").lower()
-    anim_dur = max(0.1, min(3.0, float(item.get("anim_dur", 0.4) or 0.4)))
+    base_dur = float(item.get("anim_dur", 0.5) or 0.5)
+    dur_in_val = float(item.get("anim_dur_in", base_dur) or base_dur)
+    dur_out_val = float(item.get("anim_dur_out", base_dur) or base_dur)
 
     if item.get("full_duration", False):
-        return (1.0, 0, 0, 1.0)
+        return (1.0, 0, 0, 1.0, 0.0)
 
     s = float(item.get("start_sec", 0.0) or 0.0)
     e = float(item.get("end_sec", s + 5.0) or (s + 5.0))
     t = float(current_tl_sec)
 
+    if t < s or t > e:
+        return (0.0, 0, 0, 1.0, 0.0)
+
     opacity = 1.0
     off_x = 0
     off_y = 0
     scale = 1.0
+    rot = 0.0
 
-    # In-animation
-    if anim_in != "none" and s <= t < s + anim_dur:
-        p = max(0.0, min(1.0, (t - s) / anim_dur))
-        ease = p * p * (3.0 - 2.0 * p)
+    # Total duration clamp for animation duration
+    dur_in = min(max(0.08, min(3.0, dur_in_val)), max(0.05, (e - s) * 0.49))
+    dur_out = min(max(0.08, min(3.0, dur_out_val)), max(0.05, (e - s) * 0.49))
+
+    # ---------------- 1. In-Animation (Entrance) ----------------
+    if anim_in != "none" and s <= t < s + dur_in:
+        p = max(0.0, min(1.0, (t - s) / dur_in))
+        ease_out = 1.0 - ((1.0 - p) ** 3)
+        ease_in_out = p * p * (3.0 - 2.0 * p)
+
         if anim_in == "fade":
-            opacity *= ease
+            opacity *= ease_in_out
+
+        elif anim_in == "tilt_slide_up":
+            # Diagonal tilt slide-in (matches reference video entrance)
+            off_y += int((1.0 - ease_out) * (ref_box_h * 0.22))
+            off_x -= int((1.0 - ease_out) * (ref_box_w * 0.04))
+            rot += -12.0 * (1.0 - ease_out)
+            opacity *= ease_out
+
+        elif anim_in == "tilt_slide_down":
+            off_y -= int((1.0 - ease_out) * (ref_box_h * 0.22))
+            off_x -= int((1.0 - ease_out) * (ref_box_w * 0.04))
+            rot += 12.0 * (1.0 - ease_out)
+            opacity *= ease_out
+
         elif anim_in in ("slide_up", "slide_bottom"):
-            off_y += int((1.0 - ease) * (ref_box_h * 0.15))
-            opacity *= ease
+            off_y += int((1.0 - ease_out) * (ref_box_h * 0.22))
+            opacity *= ease_out
+
         elif anim_in in ("slide_down", "slide_top"):
-            off_y -= int((1.0 - ease) * (ref_box_h * 0.15))
-            opacity *= ease
+            off_y -= int((1.0 - ease_out) * (ref_box_h * 0.22))
+            opacity *= ease_out
+
         elif anim_in in ("slide_left",):
-            off_x += int((1.0 - ease) * (ref_box_w * 0.20))
-            opacity *= ease
+            off_x += int((1.0 - ease_out) * (ref_box_w * 0.30))
+            opacity *= ease_out
+
         elif anim_in in ("slide_right",):
-            off_x -= int((1.0 - ease) * (ref_box_w * 0.20))
-            opacity *= ease
-        elif anim_in in ("pop", "zoom"):
-            scale *= (0.2 + 0.8 * ease)
-            opacity *= ease
+            off_x -= int((1.0 - ease_out) * (ref_box_w * 0.30))
+            opacity *= ease_out
 
-    # Out-animation
-    if anim_out != "none" and e - anim_dur < t <= e:
-        p = max(0.0, min(1.0, (e - t) / anim_dur))
-        ease = p * p * (3.0 - 2.0 * p)
+        elif anim_in == "float_in":
+            off_y += int((1.0 - ease_in_out) * (ref_box_h * 0.08))
+            opacity *= ease_in_out
+
+        elif anim_in == "bounce":
+            bounce_w = math.sin(p * math.pi * 2.5) * (1.0 - p) * 0.25
+            off_y += int((1.0 - ease_out) * (ref_box_h * 0.20) - bounce_w * (ref_box_h * 0.15))
+            scale *= max(0.1, (0.5 + 0.5 * ease_out) + bounce_w)
+            opacity *= min(1.0, p * 2.5)
+
+        elif anim_in in ("pop", "snap"):
+            if p < 0.70:
+                scale *= max(0.05, 0.10 + 0.98 * (p / 0.70))
+            else:
+                scale *= (1.08 - 0.08 * ((p - 0.70) / 0.30))
+            opacity *= min(1.0, p * 2.5)
+
+        elif anim_in in ("zoom_in", "zoom"):
+            scale *= max(0.05, 0.05 + 0.95 * ease_out)
+            opacity *= ease_out
+
+        elif anim_in == "zoom_out":
+            scale *= max(0.2, 1.80 - 0.80 * ease_out)
+            opacity *= ease_out
+
+        elif anim_in == "dramatic_zoom":
+            scale *= max(0.2, 3.2 - 2.2 * (p ** 0.5))
+            opacity *= min(1.0, p * 2.2)
+
+        elif anim_in == "spin_in":
+            rot -= 360.0 * (1.0 - ease_out)
+            scale *= max(0.1, 0.20 + 0.80 * ease_out)
+            opacity *= ease_out
+
+        elif anim_in == "drop_in":
+            drop_curve = (1.0 - p) * (1.0 - p)
+            rebound = (math.sin((p - 0.80) / 0.20 * math.pi) * 16) if p > 0.80 else 0
+            off_y -= int(drop_curve * (ref_box_h * 0.45) - rebound)
+            opacity *= min(1.0, p * 2.5)
+
+        elif anim_in == "flash":
+            if p < 0.25:
+                opacity *= 1.0 if int(p * 40) % 2 == 0 else 0.2
+            else:
+                opacity *= 1.0
+
+        elif anim_in == "glitch":
+            jitter = (1.0 - p)
+            off_x += int(math.sin(p * 50.0) * jitter * 24)
+            off_y += int(math.cos(p * 40.0) * jitter * 12)
+            opacity *= min(1.0, p * 2.5)
+
+    # ---------------- 2. Out-Animation (Exit) ----------------
+    if anim_out != "none" and e - dur_out < t <= e:
+        p = max(0.0, min(1.0, (e - t) / dur_out))
+        q = 1.0 - p
+        q2 = q * q
+
         if anim_out == "fade":
-            opacity *= ease
-        elif anim_out in ("slide_down", "slide_bottom"):
-            off_y += int((1.0 - ease) * (ref_box_h * 0.15))
-            opacity *= ease
-        elif anim_out in ("slide_up", "slide_top"):
-            off_y -= int((1.0 - ease) * (ref_box_h * 0.15))
-            opacity *= ease
-        elif anim_out in ("shrink", "zoom"):
-            scale *= (0.2 + 0.8 * ease)
-            opacity *= ease
+            opacity *= (p * p * (3.0 - 2.0 * p))
 
-    return (opacity, off_x, off_y, scale)
+        elif anim_out in ("slide_down", "slide_bottom"):
+            # Smooth slide down off-screen (matches reference video exit)
+            off_y += int(q2 * (ref_box_h * 0.35))
+            opacity *= max(0.0, p * 1.4 - 0.4)
+
+        elif anim_out in ("slide_up", "slide_top"):
+            off_y -= int(q2 * (ref_box_h * 0.35))
+            opacity *= max(0.0, p * 1.4 - 0.4)
+
+        elif anim_out in ("slide_left",):
+            off_x -= int(q2 * (ref_box_w * 0.40))
+            opacity *= max(0.0, p * 1.4 - 0.4)
+
+        elif anim_out in ("slide_right",):
+            off_x += int(q2 * (ref_box_w * 0.40))
+            opacity *= max(0.0, p * 1.4 - 0.4)
+
+        elif anim_out == "tilt_slide_down":
+            off_y += int(q2 * (ref_box_h * 0.35))
+            rot += 12.0 * q
+            opacity *= max(0.0, p)
+
+        elif anim_out in ("shrink",):
+            scale *= max(0.05, 0.10 + 0.90 * p)
+            opacity *= p
+
+        elif anim_out in ("zoom_out", "zoom"):
+            scale *= (1.0 + q * 1.5)
+            opacity *= max(0.0, p)
+
+        elif anim_out == "spin_out":
+            rot += 360.0 * q
+            scale *= max(0.05, p)
+            opacity *= p
+
+        elif anim_out == "drop_out":
+            off_y += int((q ** 3) * (ref_box_h * 0.50))
+            opacity *= p
+
+        elif anim_out == "flash":
+            if q > 0.70:
+                opacity *= 0.0 if int(q * 40) % 2 == 0 else 0.8
+            else:
+                opacity *= 1.0
+
+    return (max(0.0, min(1.0, opacity)), off_x, off_y, max(0.05, scale), rot)
 
 
 class StudioCanvasMixin:
@@ -233,7 +350,8 @@ class StudioCanvasMixin:
                     vpath = self.input_path
                     if not vpath or not vpath.is_file():
                         break
-                    frame = self.fast_preview.get_frame(vpath, req_ts, max_dim=1280)
+                    preview_dim = 720 if (hasattr(self, "_is_playing") and self._is_playing()) else 1280
+                    frame = self.fast_preview.get_frame(vpath, req_ts, max_dim=preview_dim)
                     if frame is not None and vpath == self.input_path:
                         self._cached_player_frame = frame
                         self._cached_player_frame_ts = req_ts
@@ -788,12 +906,22 @@ class StudioCanvasMixin:
                         self._overlay_pil_cache[v2_ck] = ov_im
                 if ov_im is None:
                     continue
-                photo = ImageTk.PhotoImage(ov_im)
+                _op_m, off_x, off_y, _sc_m, _rot_m = evaluate_item_animation(m_item, tl_now, box_w, box_h)
+                if _op_m < 0.01:
+                    continue
+                anim_ov = ov_im
+                if abs(_sc_m - 1.0) > 0.02:
+                    nw = max(10, int(round(anim_ov.width * _sc_m)))
+                    nh = max(10, int(round(anim_ov.height * _sc_m)))
+                    anim_ov = anim_ov.resize((nw, nh), Image.Resampling.BILINEAR)
+                if _op_m < 0.99 or abs(_rot_m) > 0.2:
+                    anim_ov = apply_opacity_and_rotation(anim_ov, opacity=_op_m, rotation_deg=_rot_m)
+
+                photo = ImageTk.PhotoImage(anim_ov)
                 self._overlay_photo_refs.append(photo)
-                _op_m, off_x, off_y, _sc_m = evaluate_item_animation(m_item, tl_now, box_w, box_h)
                 cx = vx0 + int(round(box_w * float(m_item.get("x", 0.5)))) + off_x
                 cy = vy0 + int(round(box_h * float(m_item.get("y", 0.5)))) + off_y
-                iw, ih = ov_im.size
+                iw, ih = anim_ov.size
                 ix0, iy0 = cx - iw // 2, cy - ih // 2
                 ix1, iy1 = ix0 + iw, iy0 + ih
                 self.player_studio_canvas.create_image(ix0, iy0, anchor="nw", image=photo)
@@ -840,12 +968,22 @@ class StudioCanvasMixin:
                         self._overlay_pil_cache[v3_ck] = card_im
                 if card_im is None:
                     continue
-                photo = ImageTk.PhotoImage(card_im)
+                _op_m, off_x, off_y, _sc_m, _rot_m = evaluate_item_animation(t_item, tl_now, box_w, box_h)
+                if _op_m < 0.01:
+                    continue
+                anim_card = card_im
+                if abs(_sc_m - 1.0) > 0.02:
+                    nw = max(10, int(round(anim_card.width * _sc_m)))
+                    nh = max(10, int(round(anim_card.height * _sc_m)))
+                    anim_card = anim_card.resize((nw, nh), Image.Resampling.BILINEAR)
+                if _op_m < 0.99 or abs(_rot_m) > 0.2:
+                    anim_card = apply_opacity_and_rotation(anim_card, opacity=_op_m, rotation_deg=_rot_m)
+
+                photo = ImageTk.PhotoImage(anim_card)
                 self._overlay_photo_refs.append(photo)
-                _op_m, off_x, off_y, _sc_m = evaluate_item_animation(t_item, tl_now, box_w, box_h)
                 cx = vx0 + int(round(box_w * float(t_item.get("x", 0.5)))) + off_x
                 cy = vy0 + int(round(box_h * float(t_item.get("y", 0.12)))) + off_y
-                tw, th = card_im.size
+                tw, th = anim_card.size
                 tx0, ty0 = cx - tw // 2, cy - th // 2
                 tx1, ty1 = tx0 + tw, ty0 + th
                 self.player_studio_canvas.create_image(tx0, ty0, anchor="nw", image=photo)
@@ -898,10 +1036,20 @@ class StudioCanvasMixin:
                         l_im_final = None
 
                 if l_im_final is not None:
-                    photo = ImageTk.PhotoImage(l_im_final)
+                    _op_m, off_x, off_y, _sc_m, _rot_m = evaluate_item_animation(l_item, tl_now, box_w, box_h)
+                    if _op_m < 0.01:
+                        continue
+                    anim_logo = l_im_final
+                    if abs(_sc_m - 1.0) > 0.02:
+                        nw = max(10, int(round(anim_logo.width * _sc_m)))
+                        nh = max(10, int(round(anim_logo.height * _sc_m)))
+                        anim_logo = anim_logo.resize((nw, nh), Image.Resampling.BILINEAR)
+                    if _op_m < 0.99 or abs(_rot_m) > 0.2:
+                        anim_logo = apply_opacity_and_rotation(anim_logo, opacity=_op_m, rotation_deg=_rot_m)
+
+                    photo = ImageTk.PhotoImage(anim_logo)
                     self._overlay_photo_refs.append(photo)
-                    fw, fh = l_im_final.size
-                    _op_m, off_x, off_y, _sc_m = evaluate_item_animation(l_item, tl_now, box_w, box_h)
+                    fw, fh = anim_logo.size
                     if anchor_mode == "center":
                         lx0 = vx0 + int(round(box_w * lx_pct)) - fw // 2 + off_x
                         ly0 = vy0 + int(round(box_h * ly_pct)) - fh // 2 + off_y
@@ -912,7 +1060,7 @@ class StudioCanvasMixin:
                     lx1, ly1 = lx0 + fw, ly0 + fh
                 else:
                     fw, fh = lw, max(20, int(lw * 0.5))
-                    _op_m, off_x, off_y, _sc_m = evaluate_item_animation(l_item, tl_now, box_w, box_h)
+                    _op_m, off_x, off_y, _sc_m, _rot_m = evaluate_item_animation(l_item, tl_now, box_w, box_h)
                     lx0 = vx0 + int(round(box_w * lx_pct)) + off_x
                     ly0 = vy0 + int(round(box_h * ly_pct)) + off_y
                     lx1, ly1 = lx0 + fw, ly0 + fh
@@ -1006,6 +1154,8 @@ class StudioCanvasMixin:
                 return None
         if isinstance(sel, tuple) and len(sel) == 2:
             return sel
+        if isinstance(sel, tuple) and len(sel) == 3 and sel[0] in ("anim_in", "anim_out"):
+            return sel
         return None
 
     def _on_player_canvas_press(self, event):
@@ -1013,14 +1163,15 @@ class StudioCanvasMixin:
         self.player_canvas_drag_start = (mx, my)
         self._drag_undo_recorded = False
         sel_norm = self._normalize_selection_ref(self.player_canvas_selected)
+        parent_sel = (sel_norm[1], sel_norm[2]) if (sel_norm and len(sel_norm) == 3) else sel_norm
 
         # 1. Check Handles of Selected Overlay
-        if sel_norm in self.player_canvas_element_boxes:
-            box = self.player_canvas_element_boxes[sel_norm]
+        if parent_sel in self.player_canvas_element_boxes:
+            box = self.player_canvas_element_boxes[parent_sel]
             for h_name, (hx, hy) in box["handles"].items():
                 if abs(mx - hx) <= 8 and abs(my - hy) <= 8:
                     self.player_canvas_drag_mode = h_name
-                    tkey, idx = sel_norm
+                    tkey, idx = parent_sel
                     tlist = self.nle_project.get_track_list(tkey)
                     if 0 <= idx < len(tlist):
                         it = tlist[idx]
@@ -1047,6 +1198,8 @@ class StudioCanvasMixin:
             if hasattr(self, "davinci_timeline"):
                 self.davinci_timeline.selected_ref = clicked_elem
                 self.davinci_timeline.redraw()
+            if hasattr(self, "_show_inspector_context"):
+                self._show_inspector_context("overlay")
             self._render_player_studio_canvas()
             self._update_inspector_properties()
             return
@@ -1148,10 +1301,11 @@ class StudioCanvasMixin:
                 dist_delta = (dx - dy) / 2.0
 
             if tkey == "V3":
-                new_fs = max(14, min(110, int(round(self.player_canvas_drag_orig_scale + dist_delta * 0.35))))
+                new_fs = max(14, min(160, int(round(self.player_canvas_drag_orig_scale + dist_delta * 0.35))))
                 item["font_size"] = new_fs
             else:
-                new_sc = max(0.05, min(0.95, self.player_canvas_drag_orig_scale + (dist_delta / vw)))
+                max_sc = 3.0 if tkey == "V2" else (2.0 if tkey == "V4" else 1.5)
+                new_sc = max(0.05, min(max_sc, self.player_canvas_drag_orig_scale + (dist_delta / vw)))
                 item["scale"] = round(new_sc, 3)
                 if tkey == "V4" and idx == 0:
                     self.video_branding_config["logo_scale"] = item["scale"]
@@ -1181,9 +1335,10 @@ class StudioCanvasMixin:
             if 0 <= idx < len(tlist):
                 it = tlist[idx]
                 if tkey == "V3":
-                    it["font_size"] = max(14, min(110, int(it.get("font_size", 34)) + step * 3))
+                    it["font_size"] = max(14, min(160, int(it.get("font_size", 34)) + step * 3))
                 else:
-                    it["scale"] = round(max(0.05, min(0.95, float(it.get("scale", 0.2)) + step * 0.02)), 3)
+                    max_sc = 3.0 if tkey == "V2" else (2.0 if tkey == "V4" else 1.5)
+                    it["scale"] = round(max(0.05, min(max_sc, float(it.get("scale", 0.2)) + step * 0.02)), 3)
                 self._update_inspector_properties()
                 self._render_player_studio_canvas()
             return
@@ -1277,7 +1432,99 @@ class StudioCanvasMixin:
             command=lambda: self._nle_add_element("logo", self.nle_playhead_sec),
         )
         sel_norm = self._normalize_selection_ref(self.player_canvas_selected)
-        if sel_norm and sel_norm[0] in ("V2", "V3", "V4"):
+        if sel_norm and (sel_norm[0] in ("V2", "V3", "V4") or (len(sel_norm) == 3 and sel_norm[0] in ("anim_in", "anim_out"))):
+            tkey = sel_norm[1] if len(sel_norm) == 3 else sel_norm[0]
+            o_idx = sel_norm[2] if len(sel_norm) == 3 else sel_norm[1]
+            tlist = self.nle_project.get_track_list(tkey) if hasattr(self, "nle_project") else []
+            if 0 <= o_idx < len(tlist):
+                ov_item = tlist[o_idx]
+                menu.add_separator()
+
+                # 1. In-Animation Submenu
+                menu_in = tk.Menu(menu, tearoff=0)
+                in_presets = [
+                    ("tilt_slide_up", "📐 انزلاق مائل لأعلى (مثل العينة)" if is_ar else "📐 Tilted Slide Up"),
+                    ("tilt_slide_down", "📐 انزلاق مائل لأسفل" if is_ar else "📐 Tilted Slide Down"),
+                    ("slide_up", "⬆ انزلاق لأعلى" if is_ar else "⬆ Slide Up"),
+                    ("slide_down", "⬇ انزلاق لأسفل" if is_ar else "⬇ Slide Down"),
+                    ("slide_left", "⬅ انزلاق يسار" if is_ar else "⬅ Slide Left"),
+                    ("slide_right", "➡ انزلاق يمين" if is_ar else "➡ Slide Right"),
+                    ("float_in", "🎈 طفو ناعم" if is_ar else "🎈 Float In"),
+                    ("fade", "💫 تلاشي Fade" if is_ar else "💫 Fade"),
+                    ("bounce", "🏀 قفز مطاطي Bounce" if is_ar else "🏀 Elastic Bounce"),
+                    ("pop", "💥 وثب سريع Pop" if is_ar else "💥 Pop / Snap"),
+                    ("zoom_in", "🔍 تكبير من الصفر" if is_ar else "🔍 Zoom In"),
+                    ("zoom_out", "🔎 هبوط من كبير" if is_ar else "🔎 Zoom In Large"),
+                    ("dramatic_zoom", "🎬 زوم سينمائي" if is_ar else "🎬 Dramatic Zoom"),
+                    ("spin_in", "🌪 دوران Spin 360°" if is_ar else "🌪 Spin In"),
+                    ("drop_in", "🪂 سقوط جاذبية" if is_ar else "🪂 Gravity Drop"),
+                    ("flash", "⚡ وميض فلاش" if is_ar else "⚡ Flash"),
+                    ("glitch", "📺 اهتزاز جليتش" if is_ar else "📺 Glitch Shake"),
+                    ("none", "🚫 بدون حركة دخول" if is_ar else "🚫 None"),
+                ]
+
+                def _set_canvas_in(pk):
+                    self.nle_project.push_undo()
+                    ov_item["anim_in"] = pk
+                    ov_item["full_duration"] = False
+                    self._save_settings()
+                    self._render_player_studio_canvas()
+                    self._update_inspector_properties()
+                    if hasattr(self, "davinci_timeline"):
+                        self.davinci_timeline.redraw()
+
+                cur_in = str(ov_item.get("anim_in", "none"))
+                for pk, pl in in_presets:
+                    chk = "✓ " if cur_in == pk else "   "
+                    menu_in.add_command(label=f"{chk}{pl}", command=lambda k=pk: _set_canvas_in(k))
+                menu.add_cascade(label="✨ " + ("تأثير حركة الدخول (In-Animation)" if is_ar else "Entrance Animation"), menu=menu_in)
+
+                # 2. Out-Animation Submenu
+                menu_out = tk.Menu(menu, tearoff=0)
+                out_presets = [
+                    ("slide_down", "⬇ انزلاق لأسفل (مثل العينة)" if is_ar else "⬇ Slide Down"),
+                    ("slide_up", "⬆ انزلاق لأعلى" if is_ar else "⬆ Slide Up"),
+                    ("slide_left", "⬅ انزلاق يسار" if is_ar else "⬅ Slide Left"),
+                    ("slide_right", "➡ انزلاق يمين" if is_ar else "➡ Slide Right"),
+                    ("tilt_slide_down", "📐 خروج مائل لأسفل" if is_ar else "📐 Tilted Slide Down"),
+                    ("fade", "💫 تلاشي Fade" if is_ar else "💫 Fade"),
+                    ("shrink", "🤏 انكماش Shrink" if is_ar else "🤏 Shrink Out"),
+                    ("zoom_out", "🔍 زوم واختفاء" if is_ar else "🔍 Zoom Out"),
+                    ("spin_out", "🌪 دوران Spin 360°" if is_ar else "🌪 Spin Out"),
+                    ("drop_out", "🪂 سقوط لأسفل" if is_ar else "🪂 Gravity Drop"),
+                    ("flash", "⚡ وميض فلاش" if is_ar else "⚡ Flash Out"),
+                    ("none", "🚫 بدون حركة خروج" if is_ar else "🚫 None"),
+                ]
+
+                def _set_canvas_out(pk):
+                    self.nle_project.push_undo()
+                    ov_item["anim_out"] = pk
+                    ov_item["full_duration"] = False
+                    self._save_settings()
+                    self._render_player_studio_canvas()
+                    self._update_inspector_properties()
+                    if hasattr(self, "davinci_timeline"):
+                        self.davinci_timeline.redraw()
+
+                cur_out = str(ov_item.get("anim_out", "none"))
+                for pk, pl in out_presets:
+                    chk = "✓ " if cur_out == pk else "   "
+                    menu_out.add_command(label=f"{chk}{pl}", command=lambda k=pk: _set_canvas_out(k))
+                menu.add_cascade(label="✨ " + ("تأثير حركة الخروج (Out-Animation)" if is_ar else "Exit Animation"), menu=menu_out)
+
+                # 3. Quick Preview
+                def _canvas_quick_preview():
+                    s_v = float(ov_item.get("start_sec", 0.0) or 0.0)
+                    self.nle_playhead_sec = max(0.0, s_v - 0.05)
+                    if hasattr(self, "_sync_vlc_to_nle_playhead"):
+                        self._sync_vlc_to_nle_playhead()
+                    self._render_player_studio_canvas()
+                    if hasattr(self, "play_playback"):
+                        self.play_playback()
+                        self.after(1400, lambda: getattr(self, "pause_playback", lambda: None)())
+
+                menu.add_command(label="▶ " + ("معاينة الحركة فوراً" if is_ar else "Preview Animation Now"), command=_canvas_quick_preview)
+
             menu.add_separator()
             menu.add_command(
                 label="🗑️ " + ("حذف العنصر المحدد" if is_ar else "Delete Selected Overlay"),
@@ -1427,15 +1674,15 @@ class StudioCanvasMixin:
                 ov_im = render_media_overlay_pil(m_item, box_w, box_h, is_ar=is_ar)
                 if ov_im is None:
                     continue
-                op_mult, off_x, off_y, sc_mult = evaluate_item_animation(m_item, tl_now, box_w, box_h)
+                op_mult, off_x, off_y, sc_mult, rot_deg = evaluate_item_animation(m_item, tl_now, box_w, box_h)
                 if op_mult < 0.01:
                     continue
                 if abs(sc_mult - 1.0) > 0.02:
-                    nw = max(10, int(ov_im.width * sc_mult))
-                    nh = max(10, int(ov_im.height * sc_mult))
+                    nw = max(10, int(round(ov_im.width * sc_mult)))
+                    nh = max(10, int(round(ov_im.height * sc_mult)))
                     ov_im = ov_im.resize((nw, nh), Image.Resampling.LANCZOS)
-                if op_mult < 0.99:
-                    ov_im = apply_opacity_and_rotation(ov_im, opacity=op_mult, rotation_deg=0.0)
+                if op_mult < 0.99 or abs(rot_deg) > 0.2:
+                    ov_im = apply_opacity_and_rotation(ov_im, opacity=op_mult, rotation_deg=rot_deg)
 
                 cx = int(round(box_w * float(m_item.get("x", 0.5)))) + off_x
                 cy = int(round(box_h * float(m_item.get("y", 0.5)))) + off_y
@@ -1462,15 +1709,15 @@ class StudioCanvasMixin:
                 )
                 if card_im is None:
                     continue
-                op_mult, off_x, off_y, sc_mult = evaluate_item_animation(t_item, tl_now, box_w, box_h)
+                op_mult, off_x, off_y, sc_mult, rot_deg = evaluate_item_animation(t_item, tl_now, box_w, box_h)
                 if op_mult < 0.01:
                     continue
                 if abs(sc_mult - 1.0) > 0.02:
-                    nw = max(10, int(card_im.width * sc_mult))
-                    nh = max(10, int(card_im.height * sc_mult))
+                    nw = max(10, int(round(card_im.width * sc_mult)))
+                    nh = max(10, int(round(card_im.height * sc_mult)))
                     card_im = card_im.resize((nw, nh), Image.Resampling.LANCZOS)
-                if op_mult < 0.99:
-                    card_im = apply_opacity_and_rotation(card_im, opacity=op_mult, rotation_deg=0.0)
+                if op_mult < 0.99 or abs(rot_deg) > 0.2:
+                    card_im = apply_opacity_and_rotation(card_im, opacity=op_mult, rotation_deg=rot_deg)
 
                 cx = int(round(box_w * float(t_item.get("x", 0.5)))) + off_x
                 cy = int(round(box_h * float(t_item.get("y", 0.12)))) + off_y
@@ -1498,7 +1745,16 @@ class StudioCanvasMixin:
                         opacity=float(l_item.get("opacity", 0.85)),
                         rotation_deg=float(l_item.get("rotation", 0.0)),
                     )
-                    _op_m, off_x, off_y, _sc_m = evaluate_item_animation(l_item, tl_now, box_w, box_h)
+                    _op_m, off_x, off_y, _sc_m, _rot_m = evaluate_item_animation(l_item, tl_now, box_w, box_h)
+                    if _op_m < 0.01:
+                        continue
+                    if abs(_sc_m - 1.0) > 0.02:
+                        nw = max(10, int(round(l_final.width * _sc_m)))
+                        nh = max(10, int(round(l_final.height * _sc_m)))
+                        l_final = l_final.resize((nw, nh), Image.Resampling.LANCZOS)
+                    if _op_m < 0.99 or abs(_rot_m) > 0.2:
+                        l_final = apply_opacity_and_rotation(l_final, opacity=_op_m, rotation_deg=_rot_m)
+
                     cx = int(round(box_w * float(l_item.get("x", 0.80)))) + off_x
                     cy = int(round(box_h * float(l_item.get("y", 0.04)))) + off_y
                     comp_base.alpha_composite(l_final, (cx, cy))

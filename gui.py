@@ -7,6 +7,9 @@ Email: Elshazly.gsm@gmail.com
 __author__ = "ahmed elshazly"
 __email__ = "Elshazly.gsm@gmail.com"
 __version__ = "1.0.0"
+import multiprocessing
+if __name__ == "__main__":
+    multiprocessing.freeze_support()
 
 import copy
 import json
@@ -15,6 +18,26 @@ import os
 import queue
 import subprocess
 import sys
+
+if sys.platform.startswith("win"):
+    _orig_popen = subprocess.Popen
+    if not getattr(_orig_popen, "_is_no_window_wrapped", False):
+        class _NoWindowPopen(_orig_popen):
+            _is_no_window_wrapped = True
+            def __init__(self, *args, **kwargs):
+                if not kwargs.pop("_show_window", False):
+                    cflags = kwargs.get("creationflags", 0)
+                    cflags |= getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+                    kwargs["creationflags"] = cflags
+
+                    si = kwargs.get("startupinfo")
+                    if si is None:
+                        si = subprocess.STARTUPINFO()
+                    si.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0x00000001)
+                    si.wShowWindow = getattr(subprocess, "SW_HIDE", 0)
+                    kwargs["startupinfo"] = si
+                super().__init__(*args, **kwargs)
+        subprocess.Popen = _NoWindowPopen
 import threading
 import time
 import tkinter as tk
@@ -23,6 +46,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+import numpy as np
 from PIL import Image, ImageTk
 
 
@@ -1201,11 +1225,10 @@ class SongCoverApp(
                     "--no-keyboard-events",
                     "--avcodec-hw=any",
                     "--avcodec-threads=0",
-                    "--file-caching=1500",
-                    "--network-caching=1500",
-                    "--disc-caching=1500",
-                    "--drop-late-frames",
-                    "--skip-frames",
+                    "--file-caching=300",
+                    "--network-caching=300",
+                    "--disc-caching=300",
+                    "--live-caching=300",
                 )
             if self.media_player is None and self.vlc_instance:
                 self.media_player = self.vlc_instance.media_player_new()
@@ -2310,6 +2333,8 @@ class SongCoverApp(
         self.player_visual_timeline.grid(row=3, column=0, sticky="ew", pady=(0, 2))
         self.player_visual_timeline.bind("<Configure>", lambda _e: self._draw_player_visual_timeline())
         self.player_visual_timeline.bind("<Button-1>", self._on_player_visual_timeline_click)
+        self.player_visual_timeline.bind("<B1-Motion>", self._on_player_visual_timeline_drag)
+        self.player_visual_timeline.bind("<ButtonRelease-1>", self._on_player_visual_timeline_release)
 
         # Transport Controls Toolbar
         media_controls = ttk.Frame(player_panel)
@@ -3797,12 +3822,14 @@ class SongCoverApp(
         xp = max(1, min(w - 1, int((cur_s / tot) * w)))
         self._pvt_playhead_id = c.create_line(xp, 0, xp, h, fill="#ffd700", width=2)
 
-    def _on_player_visual_timeline_click(self, event):
+    def _calc_pvt_src_sec(self, event_x: int) -> float:
         tot = float(self.media_duration or 0.0)
         if tot <= 0:
-            return
+            return 0.0
         w = max(1, self.player_visual_timeline.winfo_width())
-        src_sec = max(0.0, min(tot, (event.x / w) * tot))
+        return max(0.0, min(tot, (event_x / w) * tot))
+
+    def _apply_pvt_scrub(self, src_sec: float, is_final: bool = False):
         if hasattr(self, "nle_project") and self.nle_project.clips:
             c_idx, tl_sec = self.nle_project.source_to_timeline(src_sec)
             self.active_playback_clip_idx = c_idx
@@ -3812,18 +3839,63 @@ class SongCoverApp(
         self.timeline_var.set(tl_sec)
         if hasattr(self, "davinci_timeline"):
             self.davinci_timeline.set_playhead(tl_sec, auto_follow=True)
-        self._refresh_timeline_text()
-        self._draw_player_visual_timeline()
-        if self._is_playing():
-            self._start_media_from(src_sec, is_timeline_time=False)
-        else:
-            if getattr(self, "studio_live_preview_mode", False):
-                self._show_studio_canvas()
-                self._request_fast_preview_frame(src_sec, force=True)
-            else:
-                self._show_vlc_surface()
-                if self.media_player and self.media_player.get_state() not in {vlc.State.Ended, vlc.State.Error, vlc.State.Stopped}:
+        self._refresh_timeline_text(playhead_only=not is_final)
+        self._draw_player_visual_timeline(playhead_only=True)
+
+        self._seek_sync_target_sec = src_sec
+        self._seek_sync_timestamp = time.monotonic()
+        self._vlc_last_ms = int(src_sec * 1000)
+        self._vlc_last_perf = time.perf_counter()
+        self._vlc_smooth_sec = src_sec
+        self._playback_start_src_sec = src_sec
+        self._playback_start_wall_ts = time.monotonic()
+        self._playback_audio_started = False
+        self._playback_seek_pending = True
+        if self.media_player and self.media_player.get_state() not in {vlc.State.Ended, vlc.State.Error, vlc.State.Stopped}:
+            if is_final or self._is_playing():
+                try:
                     self.media_player.set_time(int(src_sec * 1000))
+                except Exception:
+                    pass
+            else:
+                now_m = time.monotonic()
+                last_scrub_vlc = getattr(self, "_last_scrub_vlc_seek_ts", 0.0)
+                if now_m - last_scrub_vlc > 0.12:
+                    self._last_scrub_vlc_seek_ts = now_m
+                    try:
+                        self.media_player.set_time(int(src_sec * 1000))
+                    except Exception:
+                        pass
+
+        if getattr(self, "studio_live_preview_mode", False):
+            self._show_studio_canvas()
+            self._request_fast_preview_frame(src_sec, force=is_final)
+        else:
+            self._show_vlc_surface()
+
+    def _on_player_visual_timeline_click(self, event):
+        tot = float(self.media_duration or 0.0)
+        if tot <= 0:
+            return
+        self._pvt_dragging = True
+        self._pvt_was_playing = self._is_playing()
+        src_sec = self._calc_pvt_src_sec(event.x)
+        self._apply_pvt_scrub(src_sec, is_final=False)
+
+    def _on_player_visual_timeline_drag(self, event):
+        if not getattr(self, "_pvt_dragging", False):
+            return
+        src_sec = self._calc_pvt_src_sec(event.x)
+        self._apply_pvt_scrub(src_sec, is_final=False)
+
+    def _on_player_visual_timeline_release(self, event):
+        if not getattr(self, "_pvt_dragging", False):
+            return
+        self._pvt_dragging = False
+        src_sec = self._calc_pvt_src_sec(event.x)
+        self._apply_pvt_scrub(src_sec, is_final=True)
+        if getattr(self, "_pvt_was_playing", False):
+            self._start_media_from(src_sec, is_timeline_time=False)
 
     def capture_current_frame_snapshot(self):
         if not self.input_path or not self.input_path.is_file() or not convert.has_video_stream(self.input_path):
@@ -5043,6 +5115,7 @@ class SongCoverApp(
                 self.nle_project.reset_for_media(source_path if source_path.is_file() else None, 60.0)
             if hasattr(self, "davinci_timeline"):
                 self.davinci_timeline.waveform_peaks = None
+                self.davinci_timeline.waveform_duration = 0.0
                 self.davinci_timeline.silence_intervals = None
                 self.davinci_timeline.selected_ref = ("clip", 0)
                 self.davinci_timeline.zoom_fit()
@@ -5206,6 +5279,7 @@ class SongCoverApp(
                     def _apply_peaks():
                         if self.input_path == source_path and hasattr(self, "davinci_timeline"):
                             self.davinci_timeline.waveform_peaks = peaks
+                            self.davinci_timeline.waveform_duration = getattr(peaks, "duration", dur_f)
                             self.davinci_timeline.redraw()
                     self.run_on_main_thread(_apply_peaks)
             except Exception:
@@ -5290,6 +5364,15 @@ class SongCoverApp(
         c_idx, clip, src_sec = self.nle_project.timeline_to_source(tl_sec) if hasattr(self, "nle_project") else (0, None, tl_sec)
         self.active_playback_clip_idx = c_idx
         if self.media_player:
+            self._seek_sync_target_sec = src_sec
+            self._seek_sync_timestamp = time.monotonic()
+            self._vlc_last_ms = int(src_sec * 1000)
+            self._vlc_last_perf = time.perf_counter()
+            self._vlc_smooth_sec = src_sec
+            self._playback_start_src_sec = src_sec
+            self._playback_start_wall_ts = time.monotonic()
+            self._playback_audio_started = False
+            self._playback_seek_pending = True
             self.media_player.set_time(int(src_sec * 1000))
             self._apply_active_clip_playback_fx(clip)
         self._refresh_timeline_text(playhead_only=True)
@@ -5367,26 +5450,28 @@ class SongCoverApp(
             pass
 
     def apply_video_color_adjustments(self, cfg=None):
-        if not self.media_player:
-            return
-        if cfg is None:
+        if cfg is not None:
+            if not hasattr(self, "video_branding_config"):
+                self.video_branding_config = {}
+            self.video_branding_config["color_config"] = dict(cfg)
+        else:
             cfg = getattr(self, "video_branding_config", {}).get("color_config", {})
-        try:
-            from video_studio.color_grading import is_color_neutral
-            if isinstance(cfg, dict) and cfg.get("enabled", True) and not is_color_neutral(cfg):
-                self.media_player.video_set_adjust_int(vlc.VideoAdjustOption.Enable, 1)
-                b = float(cfg.get("brightness", 0.0))
-                self.media_player.video_set_adjust_float(vlc.VideoAdjustOption.Brightness, max(0.0, min(2.0, 1.0 + b)))
-                c = float(cfg.get("contrast", 1.0))
-                self.media_player.video_set_adjust_float(vlc.VideoAdjustOption.Contrast, max(0.0, min(2.0, c)))
-                s = float(cfg.get("saturation", 1.0))
-                self.media_player.video_set_adjust_float(vlc.VideoAdjustOption.Saturation, max(0.0, min(3.0, s)))
-                g = float(cfg.get("gamma", 1.0))
-                self.media_player.video_set_adjust_float(vlc.VideoAdjustOption.Gamma, max(0.1, min(4.0, g)))
-            else:
+
+        # Always disable LibVLC's buggy internal adjust filter to prevent hardware Direct3D
+        # color space solarization, channel swapping, and neon yellow/cyan distortion!
+        if getattr(self, "media_player", None):
+            try:
                 self.media_player.video_set_adjust_int(vlc.VideoAdjustOption.Enable, 0)
-        except Exception:
-            pass
+            except Exception:
+                pass
+
+        # Invalidate composed video cache so new colors are immediately reflected
+        if hasattr(self, "_ready_composed_video"):
+            self._ready_composed_video = None
+
+        # Refresh Studio Canvas which renders calibrated, studio-grade color grading
+        if hasattr(self, "player_studio_canvas") and getattr(self, "studio_live_preview_mode", False):
+            self._render_player_studio_canvas()
 
     def _sync_live_video_overlay(self):
         """Refreshes the live studio canvas overlay with current branding, text, icons, and DaVinci transform."""
@@ -6327,6 +6412,15 @@ class SongCoverApp(
             self._sync_transform_sliders_from_state()
 
         if self.media_player and self.loaded_media_path == self.input_path:
+            self._seek_sync_target_sec = src_sec
+            self._seek_sync_timestamp = time.monotonic()
+            self._vlc_last_ms = int(src_sec * 1000)
+            self._vlc_last_perf = time.perf_counter()
+            self._vlc_smooth_sec = src_sec
+            self._playback_start_src_sec = src_sec
+            self._playback_start_wall_ts = time.monotonic()
+            self._playback_audio_started = False
+            self._playback_seek_pending = True
             if is_final or self._is_playing():
                 try:
                     if clip is None:
@@ -6341,6 +6435,16 @@ class SongCoverApp(
                         self._apply_active_clip_playback_fx(clip)
                 except Exception:
                     pass
+            elif not self._is_playing():
+                now_m = time.monotonic()
+                last_scrub_vlc = getattr(self, "_last_scrub_vlc_seek_ts", 0.0)
+                if now_m - last_scrub_vlc > 0.12:
+                    self._last_scrub_vlc_seek_ts = now_m
+                    try:
+                        if clip is not None:
+                            self.media_player.set_time(int(src_sec * 1000))
+                    except Exception:
+                        pass
 
             if hasattr(self, "_sync_a1_audio_playback"):
                 self._sync_a1_audio_playback(tl_sec, self._is_playing())
@@ -6355,7 +6459,7 @@ class SongCoverApp(
     def _on_nle_timeline_select(self, sel_ref):
         self.player_canvas_selected = sel_ref
         self._sync_transform_sliders_from_state()
-        if isinstance(sel_ref, tuple) and (sel_ref[0] in ("V2", "V3", "V4", "A2") or str(sel_ref[0]).startswith("AUD")):
+        if isinstance(sel_ref, tuple) and (sel_ref[0] in ("V2", "V3", "V4", "A2", "anim_in", "anim_out") or str(sel_ref[0]).startswith("AUD")):
             self._show_inspector_context("overlay")
         elif isinstance(sel_ref, tuple) and sel_ref[0] in ("clip", "V1_clip"):
             c_idx = sel_ref[1]
@@ -6534,6 +6638,11 @@ class SongCoverApp(
             st_anim = "disabled" if full_var.get() else "readonly"
             cmb_anim_in.configure(state=st_anim)
             cmb_anim_out.configure(state=st_anim)
+            try:
+                dur_ent.configure(state=st)
+                btn_preview_anim.configure(state=st)
+            except Exception:
+                pass
             if hasattr(self, "davinci_timeline"):
                 self.davinci_timeline.redraw()
             self._save_settings()
@@ -6596,20 +6705,38 @@ class SongCoverApp(
         anim_row.columnconfigure(3, weight=1)
 
         anim_in_opts = [
-            ("none", "بدون" if is_ar else "None"),
-            ("fade", "تلاشي Fade" if is_ar else "Fade"),
-            ("slide_up", "انزلاق لأعلى" if is_ar else "Slide Up"),
-            ("slide_down", "انزلاق لأسفل" if is_ar else "Slide Down"),
-            ("slide_left", "انزلاق يسار" if is_ar else "Slide Left"),
-            ("slide_right", "انزلاق يمين" if is_ar else "Slide Right"),
-            ("pop", "وثب Pop" if is_ar else "Pop / Zoom"),
+            ("none", "🚫 بدون" if is_ar else "🚫 None"),
+            ("tilt_slide_up", "📐 انزلاق مائل لأعلى (مثل العينة)" if is_ar else "📐 Tilted Slide Up"),
+            ("tilt_slide_down", "📐 انزلاق مائل لأسفل" if is_ar else "📐 Tilted Slide Down"),
+            ("slide_up", "⬆ انزلاق لأعلى" if is_ar else "⬆ Slide Up"),
+            ("slide_down", "⬇ انزلاق لأسفل" if is_ar else "⬇ Slide Down"),
+            ("slide_left", "⬅ انزلاق يسار" if is_ar else "⬅ Slide Left"),
+            ("slide_right", "➡ انزلاق يمين" if is_ar else "➡ Slide Right"),
+            ("float_in", "🎈 طفو ناعم" if is_ar else "🎈 Float In"),
+            ("fade", "💫 تلاشي Fade" if is_ar else "💫 Fade"),
+            ("bounce", "🏀 قفز مطاطي Bounce" if is_ar else "🏀 Elastic Bounce"),
+            ("pop", "💥 وثب سريع Pop" if is_ar else "💥 Pop / Snap"),
+            ("zoom_in", "🔍 تكبير Zoom In" if is_ar else "🔍 Zoom In"),
+            ("zoom_out", "🔎 هبوط من كبير" if is_ar else "🔎 Zoom In Large"),
+            ("dramatic_zoom", "🎬 زوم سينمائي" if is_ar else "🎬 Dramatic Zoom"),
+            ("spin_in", "🌪 دوران Spin 360°" if is_ar else "🌪 Spin In"),
+            ("drop_in", "🪂 سقوط جاذبية" if is_ar else "🪂 Gravity Drop"),
+            ("flash", "⚡ وميض فلاش" if is_ar else "⚡ Flash"),
+            ("glitch", "📺 اهتزاز جليتش" if is_ar else "📺 Glitch Shake"),
         ]
         anim_out_opts = [
-            ("none", "بدون" if is_ar else "None"),
-            ("fade", "تلاشي Fade" if is_ar else "Fade"),
-            ("slide_down", "انزلاق لأسفل" if is_ar else "Slide Down"),
-            ("slide_up", "انزلاق لأعلى" if is_ar else "Slide Up"),
-            ("shrink", "انكماش Shrink" if is_ar else "Shrink"),
+            ("none", "🚫 بدون" if is_ar else "🚫 None"),
+            ("slide_down", "⬇ انزلاق لأسفل (مثل العينة)" if is_ar else "⬇ Slide Down"),
+            ("slide_up", "⬆ انزلاق لأعلى" if is_ar else "⬆ Slide Up"),
+            ("slide_left", "⬅ انزلاق يسار" if is_ar else "⬅ Slide Left"),
+            ("slide_right", "➡ انزلاق يمين" if is_ar else "➡ Slide Right"),
+            ("tilt_slide_down", "📐 خروج مائل لأسفل" if is_ar else "📐 Tilted Slide Down"),
+            ("fade", "💫 تلاشي Fade" if is_ar else "💫 Fade"),
+            ("shrink", "🤏 انكماش Shrink" if is_ar else "🤏 Shrink Out"),
+            ("zoom_out", "🔍 زوم واختفاء" if is_ar else "🔍 Zoom Out"),
+            ("spin_out", "🌪 دوران Spin 360°" if is_ar else "🌪 Spin Out"),
+            ("drop_out", "🪂 سقوط لأسفل" if is_ar else "🪂 Gravity Drop"),
+            ("flash", "⚡ وميض فلاش" if is_ar else "⚡ Flash Out"),
         ]
         in_map = {d: k for k, d in anim_in_opts}
         in_rev = {k: d for k, d in anim_in_opts}
@@ -6621,13 +6748,37 @@ class SongCoverApp(
 
         ttk.Label(anim_row, text="دخول:" if is_ar else "In:").grid(row=0, column=0, sticky="w")
         var_anim_in = tk.StringVar(value=in_rev.get(cur_in, anim_in_opts[0][1]))
-        cmb_anim_in = ttk.Combobox(anim_row, textvariable=var_anim_in, values=[d for _, d in anim_in_opts], state="readonly", width=9)
+        cmb_anim_in = ttk.Combobox(anim_row, textvariable=var_anim_in, values=[d for _, d in anim_in_opts], state="readonly", width=14)
         cmb_anim_in.grid(row=0, column=1, sticky="ew", padx=(2, 4))
 
         ttk.Label(anim_row, text="خروج:" if is_ar else "Out:").grid(row=0, column=2, sticky="w")
         var_anim_out = tk.StringVar(value=out_rev.get(cur_out, anim_out_opts[0][1]))
-        cmb_anim_out = ttk.Combobox(anim_row, textvariable=var_anim_out, values=[d for _, d in anim_out_opts], state="readonly", width=9)
+        cmb_anim_out = ttk.Combobox(anim_row, textvariable=var_anim_out, values=[d for _, d in anim_out_opts], state="readonly", width=14)
         cmb_anim_out.grid(row=0, column=3, sticky="ew", padx=(2, 0))
+
+        # Animation Duration & Preview Row
+        dur_row = ttk.Frame(t_frame)
+        dur_row.grid(row=3, column=0, columnspan=6, sticky="ew", pady=(2, 2))
+        dur_row.columnconfigure(1, weight=1)
+
+        dur_val = float(item.get("anim_dur", 0.5) or 0.5)
+        dur_var = tk.StringVar(value=f"{dur_val:.2f}")
+
+        ttk.Label(dur_row, text="مدةs:" if is_ar else "Dur s:").grid(row=0, column=0, sticky="w")
+
+        def _apply_anim_dur(*_a):
+            try:
+                dv = max(0.10, min(3.0, float(dur_var.get().strip())))
+                item["anim_dur"] = round(dv, 2)
+                self._save_settings()
+                self._render_player_studio_canvas()
+            except ValueError:
+                pass
+
+        dur_ent = tk.Spinbox(dur_row, from_=0.10, to=3.0, increment=0.05, format="%.2f", textvariable=dur_var, width=5, font=("Consolas", 8), command=_apply_anim_dur)
+        dur_ent.grid(row=0, column=1, sticky="w", padx=(2, 4))
+        dur_ent.bind("<Return>", _apply_anim_dur)
+        dur_ent.bind("<FocusOut>", _apply_anim_dur)
 
         def _on_anim_select(_e=None):
             item["anim_in"] = in_map.get(var_anim_in.get(), "none")
@@ -6638,6 +6789,39 @@ class SongCoverApp(
         cmb_anim_in.bind("<<ComboboxSelected>>", _on_anim_select)
         cmb_anim_out.bind("<<ComboboxSelected>>", _on_anim_select)
 
+        def _preview_anim_effect():
+            cur_s = float(item.get("start_sec", 0.0) or 0.0)
+            cur_e = float(item.get("end_sec", cur_s + 5.0) or (cur_s + 5.0))
+            a_dur = float(item.get("anim_dur", 0.5) or 0.5)
+            # If anim_in is set, preview entrance; if only anim_out is set, preview exit
+            if item.get("anim_in", "none") != "none" or item.get("anim_out", "none") == "none":
+                target_t = max(0.0, cur_s - 0.05)
+            else:
+                target_t = max(0.0, cur_e - a_dur - 0.20)
+
+            self.nle_playhead_sec = target_t
+            if hasattr(self, "_sync_vlc_to_nle_playhead"):
+                self._sync_vlc_to_nle_playhead()
+            elif hasattr(self, "seek_timeline"):
+                self.seek_timeline(target_t)
+            if hasattr(self, "davinci_timeline"):
+                self.davinci_timeline.playhead_sec = target_t
+                self.davinci_timeline.redraw()
+            self._render_player_studio_canvas()
+
+            if hasattr(self, "play_playback"):
+                self.play_playback()
+                play_ms = int(max(800, (a_dur + 0.6) * 1000))
+                self.after(play_ms, lambda: getattr(self, "pause_playback", lambda: None)())
+
+        btn_preview_anim = ttk.Button(
+            dur_row,
+            text="▶ معاينة التأثير" if is_ar else "▶ Preview Effect",
+            style="Player.TButton",
+            command=_preview_anim_effect
+        )
+        btn_preview_anim.grid(row=0, column=2, columnspan=2, sticky="e", padx=(4, 0))
+
         if full_var.get():
             s_ent.configure(state="disabled")
             e_ent.configure(state="disabled")
@@ -6645,6 +6829,8 @@ class SongCoverApp(
             btn_set_e.configure(state="disabled")
             cmb_anim_in.configure(state="disabled")
             cmb_anim_out.configure(state="disabled")
+            dur_ent.configure(state="disabled")
+            btn_preview_anim.configure(state="disabled")
 
         # Split, Duplicate & Delete Row
         act_row = ttk.Frame(parent)
@@ -6714,6 +6900,208 @@ class SongCoverApp(
             style="Player.TButton",
         )
         back_btn.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 3))
+
+        # ---------------- Dedicated Animation Block Settings (In / Out) ----------------
+        if sel and len(sel) == 3 and sel[0] in ("anim_in", "anim_out"):
+            anim_side, tkey, o_idx = sel
+            tlist = self.nle_project.get_track_list(tkey) if hasattr(self, "nle_project") else []
+            if 0 <= o_idx < len(tlist):
+                ov_item = tlist[o_idx]
+                is_in = (anim_side == "anim_in")
+                title_txt = ("✨ إعدادات حركة الدخول" if is_in else "✨ إعدادات حركة الخروج") if is_ar else ("✨ Entrance Animation" if is_in else "✨ Exit Animation")
+                self.item_prop_card.configure(text=title_txt)
+
+                # Row 0: Back button to parent item
+                parent_tag = "الصورة" if ov_item.get("type") == "image" else ("النص" if tkey == "V3" else ("الشعار" if tkey == "V4" else "الأيقونة"))
+                btn_back_p = ttk.Button(
+                    self.item_prop_card,
+                    text=f"⬅ 🖼️ العودة لإعدادات {parent_tag} #{o_idx + 1}" if is_ar else f"⬅ 🖼️ Back to {parent_tag} #{o_idx + 1}",
+                    command=lambda: (setattr(self, "player_canvas_selected", (tkey, o_idx)), self._on_nle_timeline_select((tkey, o_idx)), self._update_inspector_properties(), getattr(self, "davinci_timeline", None) and self.davinci_timeline.redraw()),
+                    style="Player.TButton",
+                )
+                btn_back_p.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 4))
+
+                # Row 1: Target item info badge
+                info_row = ttk.Frame(self.item_prop_card)
+                info_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 4))
+                info_row.columnconfigure(0, weight=1)
+                item_desc = Path(ov_item.get("path", "")).name if ov_item.get("path") else (ov_item.get("text", "")[:24] or f"{tkey} #{o_idx + 1}")
+                lbl_badge = ttk.Label(
+                    info_row,
+                    text=f"📌 مرتبط بـ: {parent_tag} ({item_desc})" if is_ar else f"📌 Attached to: {parent_tag} ({item_desc})",
+                    font=("Segoe UI", 8, "bold"),
+                    foreground="#f59e0b" if is_in else "#f87171",
+                )
+                lbl_badge.grid(row=0, column=0, sticky="w")
+
+                # Row 2: Animation Preset Combobox
+                presets = [
+                    ("tilt_slide_up", "📐 انزلاق مائل لأعلى (مثل العينة)" if is_ar else "📐 Tilted Slide Up"),
+                    ("tilt_slide_down", "📐 انزلاق مائل لأسفل" if is_ar else "📐 Tilted Slide Down"),
+                    ("slide_up", "⬆ انزلاق لأعلى" if is_ar else "⬆ Slide Up"),
+                    ("slide_down", "⬇ انزلاق لأسفل" if is_ar else "⬇ Slide Down"),
+                    ("slide_left", "⬅ انزلاق يسار" if is_ar else "⬅ Slide Left"),
+                    ("slide_right", "➡ انزلاق يمين" if is_ar else "➡ Slide Right"),
+                    ("float_in", "🎈 طفو ناعم" if is_ar else "🎈 Float In"),
+                    ("fade", "💫 تلاشي Fade" if is_ar else "💫 Fade"),
+                    ("bounce", "🏀 قفز مطاطي Bounce" if is_ar else "🏀 Elastic Bounce"),
+                    ("pop", "💥 وثب سريع Pop" if is_ar else "💥 Pop / Snap"),
+                    ("zoom_in", "🔍 تكبير Zoom In" if is_ar else "🔍 Zoom In"),
+                    ("zoom_out", "🔎 هبوط من كبير" if is_ar else "🔎 Zoom In Large"),
+                    ("dramatic_zoom", "🎬 زوم سينمائي" if is_ar else "🎬 Dramatic Zoom"),
+                    ("spin_in", "🌪 دوران Spin 360°" if is_ar else "🌪 Spin In"),
+                    ("drop_in", "🪂 سقوط جاذبية" if is_ar else "🪂 Gravity Drop"),
+                    ("flash", "⚡ وميض فلاش" if is_ar else "⚡ Flash"),
+                    ("glitch", "📺 اهتزاز جليتش" if is_ar else "📺 Glitch Shake"),
+                    ("none", "🚫 بدون تأثير (إلغاء الحركة)" if is_ar else "🚫 None (Remove Animation)"),
+                ] if is_in else [
+                    ("slide_down", "⬇ انزلاق لأسفل (مثل العينة)" if is_ar else "⬇ Slide Down"),
+                    ("slide_up", "⬆ انزلاق لأعلى" if is_ar else "⬆ Slide Up"),
+                    ("slide_left", "⬅ انزلاق يسار" if is_ar else "⬅ Slide Left"),
+                    ("slide_right", "➡ انزلاق يمين" if is_ar else "➡ Slide Right"),
+                    ("tilt_slide_down", "📐 خروج مائل لأسفل" if is_ar else "📐 Tilted Slide Down"),
+                    ("fade", "💫 تلاشي Fade" if is_ar else "💫 Fade"),
+                    ("shrink", "🤏 انكماش Shrink" if is_ar else "🤏 Shrink Out"),
+                    ("zoom_out", "🔍 زوم واختفاء" if is_ar else "🔍 Zoom Out"),
+                    ("spin_out", "🌪 دوران Spin 360°" if is_ar else "🌪 Spin Out"),
+                    ("drop_out", "🪂 سقوط لأسفل" if is_ar else "🪂 Gravity Drop"),
+                    ("flash", "⚡ وميض فلاش" if is_ar else "⚡ Flash Out"),
+                    ("none", "🚫 بدون تأثير (إلغاء الحركة)" if is_ar else "🚫 None (Remove Animation)"),
+                ]
+                pk_map = {d: k for k, d in presets}
+                pk_rev = {k: d for k, d in presets}
+                cur_pk = str(ov_item.get(anim_side, "none") or "none")
+
+                preset_row = ttk.Frame(self.item_prop_card)
+                preset_row.grid(row=2, column=0, columnspan=2, sticky="ew", pady=2)
+                preset_row.columnconfigure(1, weight=1)
+
+                ttk.Label(preset_row, text="نوع الحركة:" if is_ar else "Effect:").grid(row=0, column=0, sticky="w", padx=(0, 4))
+                var_pk = tk.StringVar(value=pk_rev.get(cur_pk, presets[0][1]))
+                cb_pk = ttk.Combobox(preset_row, textvariable=var_pk, values=[d for _, d in presets], state="readonly")
+                cb_pk.grid(row=0, column=1, sticky="ew")
+
+                def _on_pk_change(_e=None):
+                    self.nle_project.push_undo()
+                    chosen_k = pk_map.get(var_pk.get(), "none")
+                    ov_item[anim_side] = chosen_k
+                    ov_item["full_duration"] = False
+                    self._save_settings()
+                    self._render_player_studio_canvas()
+                    if hasattr(self, "davinci_timeline"):
+                        self.davinci_timeline.redraw()
+                    if chosen_k == "none":
+                        self.player_canvas_selected = (tkey, o_idx)
+                        self._on_nle_timeline_select((tkey, o_idx))
+                        self._update_inspector_properties()
+
+                cb_pk.bind("<<ComboboxSelected>>", _on_pk_change)
+
+                # Row 3: Duration Slider + Spinbox
+                dur_r = ttk.Frame(self.item_prop_card)
+                dur_r.grid(row=3, column=0, columnspan=2, sticky="ew", pady=3)
+                dur_r.columnconfigure(1, weight=1)
+
+                cur_dur = float(ov_item.get("anim_dur_in" if is_in else "anim_dur_out", ov_item.get("anim_dur", 0.5)) or 0.5)
+                dur_sp_var = tk.StringVar(value=f"{cur_dur:.2f}")
+
+                ttk.Label(dur_r, text="المدة بالثواني:" if is_ar else "Duration (s):").grid(row=0, column=0, sticky="w", padx=(0, 4))
+
+                def _on_dur_change(v):
+                    fv = round(float(v), 2)
+                    dur_sp_var.set(f"{fv:.2f}")
+                    ov_item["anim_dur"] = fv
+                    if is_in:
+                        ov_item["anim_dur_in"] = fv
+                    else:
+                        ov_item["anim_dur_out"] = fv
+                    if hasattr(self, "davinci_timeline"):
+                        self.davinci_timeline.redraw()
+                    self._save_settings()
+                    self._render_player_studio_canvas()
+
+                sl_dur = ttk.Scale(dur_r, from_=0.10, to=3.0, value=cur_dur, orient="horizontal", command=_on_dur_change)
+                sl_dur.grid(row=0, column=1, sticky="ew", padx=2)
+
+                def _on_dur_spin(*_a):
+                    try:
+                        fv = round(max(0.10, min(3.0, float(dur_sp_var.get().strip()))), 2)
+                        sl_dur.set(fv)
+                        ov_item["anim_dur"] = fv
+                        if is_in:
+                            ov_item["anim_dur_in"] = fv
+                        else:
+                            ov_item["anim_dur_out"] = fv
+                        if hasattr(self, "davinci_timeline"):
+                            self.davinci_timeline.redraw()
+                        self._save_settings()
+                        self._render_player_studio_canvas()
+                    except ValueError:
+                        pass
+
+                sp_dur = tk.Spinbox(dur_r, from_=0.10, to=3.0, increment=0.05, format="%.2f", textvariable=dur_sp_var, width=5, font=("Consolas", 8, "bold"), command=_on_dur_spin)
+                sp_dur.grid(row=0, column=2, padx=(4, 0))
+                sp_dur.bind("<Return>", _on_dur_spin)
+                sp_dur.bind("<FocusOut>", _on_dur_spin)
+
+                # Row 4: Action Buttons (Preview & Delete)
+                btns_r = ttk.Frame(self.item_prop_card)
+                btns_r.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 2))
+                btns_r.columnconfigure(0, weight=1)
+                btns_r.columnconfigure(1, weight=1)
+
+                def _preview_current_anim():
+                    cur_s = float(ov_item.get("start_sec", 0.0) or 0.0)
+                    cur_e = float(ov_item.get("end_sec", cur_s + 5.0) or (cur_s + 5.0))
+                    a_dur = float(ov_item.get("anim_dur_in" if is_in else "anim_dur_out", ov_item.get("anim_dur", 0.5)) or 0.5)
+                    target_t = max(0.0, cur_s - 0.05) if is_in else max(0.0, cur_e - a_dur - 0.20)
+
+                    self.nle_playhead_sec = target_t
+                    if hasattr(self, "_sync_vlc_to_nle_playhead"):
+                        self._sync_vlc_to_nle_playhead()
+                    elif hasattr(self, "seek_timeline"):
+                        self.seek_timeline(target_t)
+                    if hasattr(self, "davinci_timeline"):
+                        self.davinci_timeline.playhead_sec = target_t
+                        self.davinci_timeline.redraw()
+                    self._render_player_studio_canvas()
+
+                    if hasattr(self, "play_playback"):
+                        self.play_playback()
+                        play_ms = int(max(800, (a_dur + 0.6) * 1000))
+                        self.after(play_ms, lambda: getattr(self, "pause_playback", lambda: None)())
+
+                btn_prev = ttk.Button(
+                    btns_r,
+                    text="▶ معاينة الحركة" if is_ar else "▶ Preview",
+                    style="PrimaryPlayer.TButton",
+                    command=_preview_current_anim,
+                )
+                btn_prev.grid(row=0, column=0, sticky="ew", padx=(0, 2))
+
+                def _delete_current_anim():
+                    self.nle_project.push_undo()
+                    ov_item[anim_side] = "none"
+                    side_lbl = "حركة الدخول" if is_in else "حركة الخروج"
+                    self.player_canvas_selected = (tkey, o_idx)
+                    if hasattr(self, "davinci_timeline"):
+                        self.davinci_timeline.selected_ref = (tkey, o_idx)
+                        self.davinci_timeline.selected_items = {self.davinci_timeline.selected_ref}
+                        self.davinci_timeline.show_hud_toast(f"🗑️ تم حذف {side_lbl} بنجاح" if is_ar else f"🗑️ Removed {anim_side} animation successfully")
+                        self.davinci_timeline.redraw()
+                    self._save_settings()
+                    self._update_inspector_properties()
+                    self._render_player_studio_canvas()
+
+                btn_del = ttk.Button(
+                    btns_r,
+                    text="🗑️ إزالة هذا التأثير" if is_ar else "🗑️ Delete Effect",
+                    style="Action.TButton",
+                    command=_delete_current_anim,
+                )
+                btn_del.grid(row=0, column=1, sticky="ew", padx=(2, 0))
+
+                return
 
         # ---------------- V4: Logo Properties ----------------
         if sel and sel[0] == "V4" and 0 <= sel[1] < len(self.nle_project.logo_items):
@@ -7107,12 +7495,12 @@ class SongCoverApp(
                 self._overlay_pil_cache.clear()
                 self._render_player_studio_canvas()
 
-            msc_sl = ttk.Scale(sc_r, from_=0.05, to=0.95, value=m_sc, orient="horizontal", command=_on_msc)
+            msc_sl = ttk.Scale(sc_r, from_=0.05, to=3.0, value=m_sc, orient="horizontal", command=_on_msc)
             msc_sl.grid(row=0, column=1, sticky="ew")
 
             def _on_msc_spin(*_a):
                 try:
-                    fv = max(0.05, min(0.95, float(msc_spin_var.get().strip()) / 100.0))
+                    fv = max(0.05, min(3.0, float(msc_spin_var.get().strip()) / 100.0))
                     item["scale"] = round(fv, 3)
                     msc_sl.set(fv)
                     self._overlay_pil_cache.clear()
@@ -7120,7 +7508,7 @@ class SongCoverApp(
                 except ValueError:
                     pass
 
-            sp_msc = tk.Spinbox(sc_r, from_=5, to=95, increment=2, textvariable=msc_spin_var, width=4, font=("Consolas", 8, "bold"), command=_on_msc_spin)
+            sp_msc = tk.Spinbox(sc_r, from_=5, to=300, increment=5, textvariable=msc_spin_var, width=5, font=("Consolas", 8, "bold"), command=_on_msc_spin)
             sp_msc.grid(row=0, column=2, padx=(4, 0))
             sp_msc.bind("<Return>", _on_msc_spin)
 
@@ -7364,6 +7752,21 @@ class SongCoverApp(
 
     def _quick_delete_selected_text(self):
         sel_norm = self._normalize_selection_ref(self.player_canvas_selected)
+        if sel_norm and len(sel_norm) == 3 and sel_norm[0] in ("anim_in", "anim_out"):
+            anim_side, tkey, o_idx = sel_norm
+            self.nle_project.push_undo()
+            tlist = self.nle_project.get_track_list(tkey)
+            if 0 <= o_idx < len(tlist):
+                tlist[o_idx][anim_side] = "none"
+            self.player_canvas_selected = (tkey, o_idx)
+            if hasattr(self, "davinci_timeline"):
+                self.davinci_timeline.selected_ref = (tkey, o_idx)
+                self.davinci_timeline.selected_items = {self.davinci_timeline.selected_ref}
+                self.davinci_timeline.redraw()
+            self._save_settings()
+            self._update_inspector_properties()
+            self._render_player_studio_canvas()
+            return
         if sel_norm and sel_norm[0] in ("V2", "V3", "V4"):
             self.nle_project.push_undo()
             tlist = self.nle_project.get_track_list(sel_norm[0])
@@ -7440,6 +7843,9 @@ class SongCoverApp(
                 self.media_player.pause()
         else:
             self._in_gap_playback = False
+            self._vlc_last_ms = int(src_sec * 1000)
+            self._vlc_last_perf = time.perf_counter()
+            self._vlc_smooth_sec = src_sec
             if self.media_player and self.media_player.get_state() not in {vlc.State.Ended, vlc.State.Error, vlc.State.Stopped}:
                 self.media_player.set_time(int(src_sec * 1000))
                 self._apply_active_clip_playback_fx(clip)
@@ -7460,6 +7866,13 @@ class SongCoverApp(
         if hasattr(self, "davinci_timeline"):
             self.davinci_timeline.set_playhead(0.0, auto_follow=True)
         _idx, clip, src_sec = self.nle_project.timeline_to_source(0.0) if hasattr(self, "nle_project") else (0, None, 0.0)
+        self._vlc_last_ms = int(src_sec * 1000)
+        self._vlc_last_perf = time.perf_counter()
+        self._vlc_smooth_sec = src_sec
+        self._playback_start_src_sec = src_sec
+        self._playback_start_wall_ts = time.monotonic()
+        self._playback_audio_started = False
+        self._playback_seek_pending = True
         if clip is None:
             self._in_gap_playback = True
             self._gap_last_wall_ts = time.monotonic()
@@ -7490,6 +7903,13 @@ class SongCoverApp(
             self.davinci_timeline.set_playhead(end_tl, auto_follow=True)
         c_idx, clip, src_sec = self.nle_project.timeline_to_source(end_tl) if hasattr(self, "nle_project") else (0, None, end_tl)
         self.active_playback_clip_idx = c_idx
+        self._vlc_last_ms = int(src_sec * 1000)
+        self._vlc_last_perf = time.perf_counter()
+        self._vlc_smooth_sec = src_sec
+        self._playback_start_src_sec = src_sec
+        self._playback_start_wall_ts = time.monotonic()
+        self._playback_audio_started = False
+        self._playback_seek_pending = True
         if clip is None:
             self._in_gap_playback = True
             self._gap_last_wall_ts = time.monotonic()
@@ -7518,6 +7938,13 @@ class SongCoverApp(
             self.davinci_timeline.set_playhead(new_tl, auto_follow=True)
         c_idx, clip, src_sec = self.nle_project.timeline_to_source(new_tl) if hasattr(self, "nle_project") else (0, None, new_tl)
         self.active_playback_clip_idx = c_idx
+        self._vlc_last_ms = int(src_sec * 1000)
+        self._vlc_last_perf = time.perf_counter()
+        self._vlc_smooth_sec = src_sec
+        self._playback_start_src_sec = src_sec
+        self._playback_start_wall_ts = time.monotonic()
+        self._playback_audio_started = False
+        self._playback_seek_pending = True
         if clip is None:
             self._in_gap_playback = True
             self._gap_last_wall_ts = time.monotonic()
@@ -7760,6 +8187,9 @@ class SongCoverApp(
         self._render_player_studio_canvas()
 
     def open_video_color_dialog(self):
+        # Automatically switch to Studio Canvas mode for accurate, non-distorted live color preview
+        if hasattr(self, "_show_studio_canvas") and not getattr(self, "studio_live_preview_mode", False):
+            self._show_studio_canvas()
         dlg = VideoColorDialog(self)
         self._apply_theme_to_toplevel(dlg)
         dlg.wait_window()
@@ -8282,7 +8712,11 @@ class SongCoverApp(
         if self.open_output_var.get() and not failed and not canceled:
             self.open_folder(self.output_dir)
         if failed:
-            messagebox.showerror(self.text("app_title"), self.text("error_check_log"))
+            err_msg = getattr(self, "last_error_message", None)
+            display_err = f"{self.text('error_check_log')}\n\n{err_msg}" if err_msg else self.text("error_check_log")
+            messagebox.showerror(self.text("app_title"), display_err)
+            if hasattr(self, "log_visible") and not self.log_visible and hasattr(self, "toggle_log_drawer"):
+                self.toggle_log_drawer()
         elif not canceled:
             messagebox.showinfo(self.text("app_title"), self.text("files_ready"))
 
@@ -8584,8 +9018,60 @@ class SongCoverApp(
         if hasattr(self, "btn_toggle_log"):
             self.btn_toggle_log.configure(text=f"{self.text('view_log_btn')} {arrow}")
 
+    def _is_active_typing_widget(self, w):
+        if not w:
+            return False
+        try:
+            if isinstance(w, (tk.Entry, ttk.Entry, tk.Text, tk.Spinbox, ttk.Spinbox)):
+                state = str(w.cget("state"))
+                return state not in ("disabled", "readonly")
+            if isinstance(w, ttk.Combobox):
+                state = str(w.cget("state"))
+                return state not in ("readonly", "disabled")
+        except Exception:
+            pass
+        return False
+
+    def _handle_space_toggle(self, event=None):
+        widget = getattr(event, "widget", None)
+        if self._is_active_typing_widget(widget):
+            return None
+
+        top = None
+        if widget:
+            try:
+                top = widget.winfo_toplevel()
+            except Exception:
+                pass
+
+        if top and top != self:
+            if hasattr(top, "_toggle_play"):
+                top._toggle_play()
+                return "break"
+            if hasattr(top, "_toggle_split_graded"):
+                top._toggle_split_graded()
+                return "break"
+            if hasattr(widget, "invoke") and callable(widget.invoke):
+                try:
+                    widget.invoke()
+                except Exception:
+                    pass
+                return "break"
+            return None
+
+        if widget and hasattr(widget, "state"):
+            try:
+                widget.state(["!pressed", "!active"])
+            except Exception:
+                pass
+
+        if self._single_media_file_selected() or (hasattr(self, "loaded_media_path") and self.loaded_media_path):
+            self.toggle_play_pause()
+
+        return "break"
+
     def _handle_split_at_playhead_shortcut(self, event=None):
-        if isinstance(getattr(event, "widget", None), (tk.Entry, ttk.Entry, tk.Text, tk.Spinbox, ttk.Spinbox, ttk.Combobox)):
+        if self._is_active_typing_widget(getattr(event, "widget", None)):
             return
         if hasattr(self, "davinci_timeline"):
             self.davinci_timeline.split_at_playhead()
@@ -8593,7 +9079,7 @@ class SongCoverApp(
 
     def _bind_studio_shortcuts(self):
         def _on_key(event):
-            if isinstance(event.widget, (tk.Entry, ttk.Entry, tk.Text, tk.Spinbox, ttk.Spinbox, ttk.Combobox)):
+            if self._is_active_typing_widget(getattr(event, "widget", None)):
                 return
             k = (event.keysym or "").lower()
             kc = getattr(event, "keycode", 0)
@@ -8624,9 +9110,7 @@ class SongCoverApp(
                 return
 
             if k == "space" or kc == 32:
-                if self._single_media_file_selected() or (hasattr(self, "loaded_media_path") and self.loaded_media_path):
-                    self.toggle_play_pause()
-                    return "break"
+                return self._handle_space_toggle(event)
             elif in_player_tab and is_s_key:
                 return self._handle_split_at_playhead_shortcut(event)
             elif in_player_tab and is_b_key:
@@ -8654,6 +9138,34 @@ class SongCoverApp(
                     return "break"
 
         self.bind("<KeyPress>", _on_key)
+
+        # Intercept space on all non-text widget classes so buttons, checkboxes,
+        # comboboxes, scales, and lists never swallow or misfire spacebar playback
+        space_classes = (
+            "Button", "TButton", "Checkbutton", "TCheckbutton",
+            "Radiobutton", "TRadiobutton", "Scale", "TScale",
+            "Combobox", "TCombobox", "Treeview", "Listbox",
+            "Scrollbar", "TScrollbar"
+        )
+        for cls in space_classes:
+            try:
+                self.bind_class(cls, "<Key-space>", self._handle_space_toggle)
+                self.bind_class(
+                    cls,
+                    "<KeyRelease-space>",
+                    lambda e: "break" if not self._is_active_typing_widget(getattr(e, "widget", None)) else None,
+                )
+            except Exception:
+                pass
+
+        try:
+            self.bind_all("<Key-space>", self._handle_space_toggle)
+            self.bind_all(
+                "<KeyRelease-space>",
+                lambda e: "break" if not self._is_active_typing_widget(getattr(e, "widget", None)) else None,
+            )
+        except Exception:
+            pass
 
         # Global fallbacks ensuring Ctrl+B, Ctrl+Z, and Ctrl+Y are captured anywhere
         for seq in ("<Control-b>", "<Control-B>", "<Control-Key-66>"):
@@ -8702,6 +9214,7 @@ class SongCoverApp(
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     try:
         app = SongCoverApp()
         app.mainloop()

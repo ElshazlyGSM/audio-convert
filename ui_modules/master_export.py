@@ -466,6 +466,14 @@ class MasterExportMixin:
         is_batch_separate = (export_scope == "separate")
 
         has_nle = hasattr(self, "nle_project") and bool(self.nle_project.clips)
+        a1_muted = has_nle and (not self.nle_project.track_enabled.get("A1", True))
+        export_audio_items = []
+        if has_nle and self.nle_project.track_enabled.get("A2", True):
+            export_audio_items = [
+                copy.deepcopy(it) for it in getattr(self.nle_project, "audio_items", [])
+                if it.get("enabled", True) and not it.get("muted", False)
+            ]
+
         if is_batch_separate:
             if not has_nle or not self.nle_project.clips:
                 is_ar = self.language_var.get() == "العربية"
@@ -545,13 +553,6 @@ class MasterExportMixin:
                 dur_seconds = None
 
             has_manual_trim = (start_seconds > 0) or (dur_seconds is not None)
-            a1_muted = has_nle and (not self.nle_project.track_enabled.get("A1", True))
-            export_audio_items = []
-            if has_nle and self.nle_project.track_enabled.get("A2", True):
-                export_audio_items = [
-                    copy.deepcopy(it) for it in getattr(self.nle_project, "audio_items", [])
-                    if it.get("enabled", True) and not it.get("muted", False)
-                ]
             use_nle_clips = inc_timeline and (not has_manual_trim) and has_nle and (self.nle_project.has_timeline_cuts_or_clip_fx() or a1_muted or bool(export_audio_items))
             nle_clips = None
             if use_nle_clips:
@@ -774,6 +775,8 @@ class MasterExportMixin:
                 scope_tag,
                 is_ar,
                 is_batch_separate,
+                export_audio_items,
+                a1_muted,
             ),
             daemon=True,
         )
@@ -803,7 +806,11 @@ class MasterExportMixin:
         scope_tag="",
         is_ar=True,
         is_batch_separate=False,
+        export_audio_items=None,
+        a1_muted=False,
     ):
+        export_audio_items = export_audio_items or []
+        a1_muted = bool(a1_muted)
         old_stdout = sys.stdout
         old_stderr = sys.stderr
         from gui import QueueWriter
@@ -1125,6 +1132,7 @@ class MasterExportMixin:
                 self.messages.put("\n[Master Export] " + ("تم إلغاء التصدير بنجاح." if is_ar else "Export canceled by user.") + "\n")
                 self.messages.put("\n__CANCELED__")
             else:
+                self.last_error_message = str(exc)
                 self.messages.put(f"\n[Master Export] Error: {exc}\n")
                 self.messages.put("\n__FAILED__")
         finally:

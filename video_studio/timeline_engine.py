@@ -146,6 +146,10 @@ class NLEProjectState:
         self.restore_snapshot(snap)
         return True
 
+    def init_from_source(self, duration_sec: float, filename: str = "", source_path: Any = None):
+        target_path = source_path or (Path(filename) if filename else (Path(self.source_path_str) if self.source_path_str else None))
+        self.reset_for_media(target_path, duration_sec)
+
     def reset_for_media(self, source_path: Optional[Path], duration_sec: float):
         if not source_path:
             self.source_path_str = ""
@@ -1061,7 +1065,7 @@ class FastVideoPreviewProvider:
                                 self._container.close()
                             except Exception:
                                 pass
-                        self._container = av.open(p_str)
+                        self._container = av.open(p_str, timeout=5.0)
                         v_streams = [s for s in self._container.streams.video]
                         if not v_streams:
                             self._container.close()
@@ -1082,15 +1086,15 @@ class FastVideoPreviewProvider:
 
                     delta = ts - self._last_decoded_sec
 
-                    # 1. Quick reuse if within playback jitter window (-0.12s to +0.024s)
-                    if -0.12 <= delta <= 0.024 and self._last_pil is not None and abs(self._last_max_dim - max_dim) <= 96:
+                    # 1. Quick reuse if within tiny playback jitter window (-0.035s to +0.015s)
+                    if -0.035 <= delta <= 0.015 and self._last_pil is not None and abs(self._last_max_dim - max_dim) <= 96:
                         return self._last_pil
 
-                    # 2. Seek only when scrubbing backward (< -0.40s) or jumping forward (> 1.25s) or on reset
-                    need_seek = (delta < -0.40) or (delta > 1.25) or (self._last_decoded_sec < 0) or (self._frame_iter is None)
+                    # 2. Seek when scrubbing backward (< -0.05s) or jumping forward (> 0.40s) or on reset
+                    need_seek = (delta < -0.05) or (delta > 0.40) or (self._last_decoded_sec < 0) or (self._frame_iter is None)
                     if need_seek:
                         tb = float(self._stream.time_base) if self._stream.time_base else (1.0 / 30.0)
-                        seek_sec = max(0.0, ts - 0.08)
+                        seek_sec = max(0.0, ts - 0.04)
                         seek_pts = int(seek_sec / tb)
                         try:
                             self._container.seek(seek_pts, stream=self._stream, any_frame=False, backward=True)
@@ -1101,14 +1105,15 @@ class FastVideoPreviewProvider:
                     best_frame = None
                     tb = float(self._stream.time_base) if self._stream.time_base else (1.0 / 30.0)
                     frames_checked = 0
-                    max_scan = 45 if need_seek else 3
+                    max_scan = 75 if need_seek else 6
+                    t_scan_start = time.perf_counter()
 
                     for frame in self._frame_iter:
                         frames_checked += 1
                         f_sec = float(frame.pts * tb) if frame.pts is not None else ts
                         best_frame = frame
                         self._last_decoded_sec = f_sec
-                        if f_sec >= ts - 0.018 or frames_checked >= max_scan:
+                        if f_sec >= ts - 0.018 or frames_checked >= max_scan or (time.perf_counter() - t_scan_start > 0.08):
                             break
 
                     if best_frame is not None:
@@ -1159,6 +1164,52 @@ class FastVideoPreviewProvider:
             return None
 
 
+class WaveformPeaks(list):
+    """List of normalized peaks [0.0..1.0] with exact audio duration metadata."""
+    def __init__(self, items=(), duration: float = 0.0):
+        super().__init__(items)
+        self.duration = float(duration)
+
+
+def _process_audio_samples(samples: np.ndarray, num_buckets: Optional[int] = None) -> Optional[WaveformPeaks]:
+    if samples is None or samples.size == 0:
+        return None
+    actual_dur = float(samples.size / 2000.0)
+
+    if num_buckets is not None and num_buckets > 0:
+        b = min(num_buckets, samples.size)
+        splits = np.array_split(samples, b)
+        p_max = np.array([float(np.max(ch)) if ch.size else 0.0 for ch in splits], dtype=np.float32)
+        p_rms = np.array([float(np.sqrt(np.mean(ch ** 2))) if ch.size else 0.0 for ch in splits], dtype=np.float32)
+    else:
+        # Fixed 400 peaks/second (every 5 samples at 2000 Hz = 2.5 ms)
+        # Avoid any array padding which dilates time coordinates!
+        chunk_size = 5
+        n_chunks = max(1, samples.size // chunk_size)
+        reshaped = samples[:n_chunks * chunk_size].reshape(n_chunks, chunk_size)
+        p_max = reshaped.max(axis=1)
+        p_rms = np.sqrt(np.mean(reshaped ** 2, axis=1))
+        if samples.size % chunk_size != 0 and samples.size > chunk_size:
+            rem = samples[n_chunks * chunk_size:]
+            p_max = np.append(p_max, rem.max())
+            p_rms = np.append(p_rms, np.sqrt(np.mean(rem ** 2)))
+
+    peaks = 0.65 * p_max + 0.35 * (p_rms * 2.0)
+    p99 = float(np.percentile(peaks, 99)) if peaks.size else 1.0
+    denom = max(100.0, p99)
+    norm = np.clip(peaks / denom, 0.0, 1.0)
+    # Subtle noise floor gate at 0.3% (0.003) so background hiss doesn't clutter pauses,
+    # but actual low-volume speech, breathing or whispers are preserved and NEVER zeroed out!
+    gate = 0.003
+    norm = np.where(norm < gate, 0.0, (norm - gate) / (1.0 - gate))
+    # Speech syllable contrast curve (gamma 0.82 lifts subtle voice details)
+    norm = np.power(norm, 0.82)
+    norm = np.clip(norm, 0.0, 1.0)
+    # Fast vectorized rounding and conversion
+    out_list = np.round(norm, 3).tolist()
+    return WaveformPeaks(out_list, duration=actual_dur)
+
+
 def extract_audio_waveform_peaks(
     media_path: Path,
     num_buckets: Optional[int] = None,
@@ -1174,7 +1225,7 @@ def extract_audio_waveform_peaks(
     if not media_path.is_file():
         return None
 
-    # 1. Fast Native FFmpeg raw s16le stream at 1000 Hz with BELOW_NORMAL priority
+    # 1. Fast Native FFmpeg raw s16le stream at 2000 Hz with BELOW_NORMAL priority
     try:
         ff = ffmpeg_exe or "ffmpeg"
         cmd = [
@@ -1184,7 +1235,7 @@ def extract_audio_waveform_peaks(
             "-i", str(media_path),
             "-vn",
             "-ac", "1",
-            "-ar", "1000",
+            "-ar", "2000",
             "-f", "s16le",
             "-",
         ]
@@ -1195,29 +1246,13 @@ def extract_audio_waveform_peaks(
             cmd,
             capture_output=True,
             creationflags=cflags,
-            timeout=45,
+            timeout=60,
         )
         if res.returncode == 0 and res.stdout:
             samples = np.abs(np.frombuffer(res.stdout, dtype=np.int16).astype(np.float32))
-            if samples.size > 0:
-                if num_buckets is not None and num_buckets > 0:
-                    b = min(num_buckets, max(32, samples.size))
-                else:
-                    b = max(100, int(samples.size / 10))
-                pad_len = (b - (samples.size % b)) % b
-                if pad_len:
-                    samples = np.pad(samples, (0, pad_len), mode="edge")
-                peaks = samples.reshape(b, -1).max(axis=1)
-                p99 = float(np.percentile(peaks, 99)) if peaks.size else 1.0
-                denom = max(120.0, p99)
-                norm = np.clip(peaks / denom, 0.0, 1.0)
-                # Gate background noise / room hiss below 4.5% so pauses between words are dead flat 0.0
-                gate = 0.045
-                norm = np.where(norm < gate, 0.0, (norm - gate) / (1.0 - gate))
-                # Speech syllable contrast curve (gamma 1.25)
-                norm = np.power(norm, 1.25)
-                norm = np.clip(norm, 0.0, 1.0)
-                return [round(float(x), 3) for x in norm]
+            res_peaks = _process_audio_samples(samples, num_buckets)
+            if res_peaks:
+                return res_peaks
     except Exception:
         pass
 
@@ -1229,30 +1264,16 @@ def extract_audio_waveform_peaks(
                 if not container.streams.audio:
                     return None
                 a_stream = container.streams.audio[0]
-                resampler = av.AudioResampler(format="s16", layout="mono", rate=1000)
+                resampler = av.AudioResampler(format="s16", layout="mono", rate=2000)
                 for frame in container.decode(a_stream):
                     for rf in resampler.resample(frame):
                         arr = rf.to_ndarray()
                         chunks.append(arr.reshape(-1))
             if chunks:
                 samples = np.abs(np.concatenate(chunks).astype(np.float32))
-                if samples.size > 0:
-                    if num_buckets is not None and num_buckets > 0:
-                        b = min(num_buckets, max(32, samples.size))
-                    else:
-                        b = max(100, int(samples.size / 10))
-                    pad_len = (b - (samples.size % b)) % b
-                    if pad_len:
-                        samples = np.pad(samples, (0, pad_len), mode="edge")
-                    peaks = samples.reshape(b, -1).max(axis=1)
-                    p99 = float(np.percentile(peaks, 99)) if peaks.size else 1.0
-                    denom = max(120.0, p99)
-                    norm = np.clip(peaks / denom, 0.0, 1.0)
-                    gate = 0.045
-                    norm = np.where(norm < gate, 0.0, (norm - gate) / (1.0 - gate))
-                    norm = np.power(norm, 1.25)
-                    norm = np.clip(norm, 0.0, 1.0)
-                    return [round(float(x), 3) for x in norm]
+                res_peaks = _process_audio_samples(samples, num_buckets)
+                if res_peaks:
+                    return res_peaks
         except Exception:
             pass
 

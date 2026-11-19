@@ -337,7 +337,7 @@ def render_icon_pil(
     fg = preset.get("fg", (255, 255, 255, 255))
     symbol = preset.get("symbol", "star")
 
-    target_width = max(32, min(1400, int(target_width)))
+    target_width = max(32, min(4096, int(target_width)))
 
     if kind == "badge":
         label = (custom_text or "").strip()
@@ -495,7 +495,7 @@ def render_media_overlay_pil(
     with opacity and rotation applied.
     """
     item_type = item.get("type", "icon")
-    scale = max(0.03, min(1.5, float(item.get("scale", 0.18))))
+    scale = max(0.03, min(3.0, float(item.get("scale", 0.18))))
     target_w = max(24, int(round(canvas_w * scale)))
     opacity = float(item.get("opacity", 1.0))
     rotation = float(item.get("rotation", 0.0))

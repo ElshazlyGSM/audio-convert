@@ -12,6 +12,26 @@ import re
 import shutil
 import subprocess
 import sys
+
+if sys.platform.startswith("win"):
+    _orig_popen = subprocess.Popen
+    if not getattr(_orig_popen, "_is_no_window_wrapped", False):
+        class _NoWindowPopen(_orig_popen):
+            _is_no_window_wrapped = True
+            def __init__(self, *args, **kwargs):
+                if not kwargs.pop("_show_window", False):
+                    cflags = kwargs.get("creationflags", 0)
+                    cflags |= getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+                    kwargs["creationflags"] = cflags
+
+                    si = kwargs.get("startupinfo")
+                    if si is None:
+                        si = subprocess.STARTUPINFO()
+                    si.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0x00000001)
+                    si.wShowWindow = getattr(subprocess, "SW_HIDE", 0)
+                    kwargs["startupinfo"] = si
+                super().__init__(*args, **kwargs)
+        subprocess.Popen = _NoWindowPopen
 import os
 import threading
 import time
@@ -19,6 +39,7 @@ from io import BytesIO
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
+import numpy as np
 import requests
 from PIL import Image
 from mutagen.flac import FLAC, Picture
@@ -41,10 +62,25 @@ try:
 except Exception:
     av = None
 
-try:
-    import faster_whisper
-except Exception:
-    faster_whisper = None
+faster_whisper = None
+_faster_whisper_attempted = False
+
+
+def get_faster_whisper():
+    global faster_whisper, _faster_whisper_attempted
+    if not _faster_whisper_attempted:
+        _faster_whisper_attempted = True
+        try:
+            import faster_whisper as _fw
+            faster_whisper = _fw
+        except Exception as _e:
+            faster_whisper = None
+            try:
+                with open(APP_DIR / "app_debug.log", "a", encoding="utf-8") as _f:
+                    _f.write(f"\n[Whisper Import Warning]: {_e}\n")
+            except Exception:
+                pass
+    return faster_whisper
 
 _CACHED_WHISPER_MODEL = None
 _CACHED_WHISPER_KEY = None
@@ -307,7 +343,7 @@ SUBTITLE_TRANSLATION_LANGUAGES = {
 
 
 def whisper_available():
-    return faster_whisper is not None
+    return get_faster_whisper() is not None
 
 
 
@@ -355,7 +391,13 @@ def ffprobe_executable():
 
 def hidden_subprocess_kwargs():
     if sys.platform.startswith("win"):
-        return {"creationflags": subprocess.CREATE_NO_WINDOW}
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0x00000001)
+        si.wShowWindow = getattr(subprocess, "SW_HIDE", 0)
+        return {
+            "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
+            "startupinfo": si,
+        }
     return {}
 
 
@@ -2508,7 +2550,8 @@ def get_whisper_model_status(model_size="base", models_dir=None):
             }
 
     # 2. Check standard HuggingFace Hub cache
-    if faster_whisper is not None:
+    fw = get_faster_whisper()
+    if fw is not None:
         try:
             import faster_whisper.utils as u
             p = u.download_model(model_size, local_files_only=True)
@@ -2636,6 +2679,9 @@ def download_whisper_model(
 
     _ACTIVE_DOWNLOAD_CONTEXT["aborted"] = False
 
+    fw = get_faster_whisper()
+    if fw is None:
+        raise RuntimeError("AI subtitle engine (faster_whisper) is not available on this system.")
     import faster_whisper.utils as u
     repo_id = u._MODELS.get(model_size)
     if not repo_id:
@@ -3101,6 +3147,9 @@ def transcribe_media(
             raise CancelledError("Operation canceled")
 
         try:
+            fw = get_faster_whisper()
+            if fw is None:
+                raise RuntimeError("AI subtitle engine (faster_whisper) is not available on this system.")
             if _CACHED_WHISPER_KEY == whisper_key and _CACHED_WHISPER_MODEL is not None:
                 whisper_model = _CACHED_WHISPER_MODEL
             else:
@@ -3112,7 +3161,7 @@ def transcribe_media(
                         0,
                         media_duration,
                     )
-                whisper_model = faster_whisper.WhisperModel(
+                whisper_model = fw.WhisperModel(
                     str(model_path),
                     device=device,
                     compute_type=compute_type,
@@ -3195,7 +3244,7 @@ def transcribe_media(
                             0,
                             media_duration,
                         )
-                    whisper_model = faster_whisper.WhisperModel(
+                    whisper_model = fw.WhisperModel(
                         str(model_path),
                         device="cpu",
                         compute_type="int8",

@@ -22,6 +22,8 @@ class PlaybackSyncMixin:
     """Provides VLC playback and timeline synchronization methods for MediaAudioStudioApp."""
 
     def _is_playing(self):
+        if getattr(self, "_is_user_paused", False):
+            return False
         return bool(getattr(self, "_in_gap_playback", False) or (self.media_player and self.media_player.is_playing()))
 
     def _refresh_play_button(self):
@@ -40,13 +42,13 @@ class PlaybackSyncMixin:
                     "--quiet",
                     "--no-stats",
                     "--no-mouse-events",
+                    "--no-keyboard-events",
                     "--avcodec-hw=any",
                     "--avcodec-threads=0",
-                    "--file-caching=1500",
-                    "--network-caching=1500",
-                    "--disc-caching=1500",
-                    "--drop-late-frames",
-                    "--skip-frames",
+                    "--file-caching=300",
+                    "--network-caching=300",
+                    "--disc-caching=300",
+                    "--live-caching=300",
                 )
             except Exception:
                 self.vlc_instance = None
@@ -196,6 +198,7 @@ class PlaybackSyncMixin:
 
         c_idx, clip, src_sec = self.nle_project.timeline_to_source(tl_sec) if hasattr(self, "nle_project") else (0, None, tl_sec)
         self.active_playback_clip_idx = c_idx
+        self._is_user_paused = False
 
         if self.media_player and self.loaded_media_path == self.input_path:
             state = self.media_player.get_state()
@@ -212,7 +215,17 @@ class PlaybackSyncMixin:
                     self._gap_last_wall_ts = time.monotonic()
                 else:
                     self._in_gap_playback = False
-                    self.media_player.set_time(int(max(0.0, src_sec) * 1000))
+                    self._seek_sync_target_sec = src_sec
+                    self._seek_sync_timestamp = time.monotonic()
+                    self._playback_start_src_sec = src_sec
+                    self._playback_start_wall_ts = time.monotonic()
+                    self._playback_audio_started = False
+                    cur_vlc_s = (self.media_player.get_time() or 0) / 1000.0
+                    if abs(cur_vlc_s - src_sec) > 0.04:
+                        self.media_player.set_time(int(max(0.0, src_sec) * 1000))
+                        self._playback_seek_pending = True
+                    else:
+                        self._playback_seek_pending = False
                     self.media_player.play()
                     self._apply_active_clip_playback_fx(clip)
                     self.after(50, lambda c=clip: self._apply_active_clip_playback_fx(c))
@@ -232,6 +245,7 @@ class PlaybackSyncMixin:
         self._ensure_vlc_player()
         if not self.vlc_instance or not self.media_player:
             return
+        self._is_user_paused = False
 
         if is_timeline_time and hasattr(self, "nle_project") and self.nle_project.clips:
             c_idx, clip, src_sec = self.nle_project.timeline_to_source(start_seconds)
@@ -255,6 +269,8 @@ class PlaybackSyncMixin:
             self._show_vlc_surface()
 
         media = self.vlc_instance.media_new(str(self.input_path))
+        if src_sec > 0.05:
+            media.add_option(f":start-time={src_sec:.3f}")
         self.media_player.set_media(media)
         self.loaded_media_path = self.input_path
 
@@ -263,8 +279,15 @@ class PlaybackSyncMixin:
             self._gap_last_wall_ts = time.monotonic()
         else:
             self._in_gap_playback = False
+            self._seek_sync_target_sec = src_sec
+            self._seek_sync_timestamp = time.monotonic()
+            self._playback_start_src_sec = src_sec
+            self._playback_start_wall_ts = time.monotonic()
+            self._playback_audio_started = False
+            self._playback_seek_pending = True if src_sec > 0.05 else False
             self.media_player.play()
-            self._seek_loaded_player(src_sec * 1000)
+            if src_sec > 0.05:
+                self._seek_loaded_player(src_sec * 1000)
             self._apply_active_clip_playback_fx(clip)
             self.after(50, lambda c=clip: self._apply_active_clip_playback_fx(c))
             self.after(160, lambda c=clip: self._apply_active_clip_playback_fx(c))
@@ -283,9 +306,27 @@ class PlaybackSyncMixin:
             self.media_player.set_time(int(target_ms))
 
     def pause_playback(self):
+        self._is_user_paused = True
         self._in_gap_playback = False
-        if self.media_player and self.media_player.is_playing():
-            self.media_player.pause()
+        self._vlc_last_ms = None
+        self._vlc_last_perf = None
+        self._vlc_smooth_sec = None
+        self._playback_audio_started = False
+        self._playback_seek_pending = False
+        cur_tl = self._current_timeline_seconds() if hasattr(self, "_current_timeline_seconds") else 0.0
+        c_idx, clip, cur_src = self.nle_project.timeline_to_source(cur_tl) if hasattr(self, "nle_project") else (0, None, cur_tl)
+        self._playback_start_src_sec = cur_src
+        self._playback_start_wall_ts = time.monotonic()
+        self._cancel_playback_tick()
+        if self.media_player:
+            try:
+                self.media_player.set_pause(1)
+            except Exception:
+                try:
+                    if self.media_player.is_playing():
+                        self.media_player.pause()
+                except Exception:
+                    pass
         if getattr(self, "a1_audio_player", None):
             try:
                 self.a1_audio_player.pause()
@@ -302,7 +343,15 @@ class PlaybackSyncMixin:
         self._sync_live_video_overlay()
 
     def stop_playback(self, reset_position=True):
+        self._is_user_paused = True
         self._in_gap_playback = False
+        self._vlc_last_ms = None
+        self._vlc_last_perf = None
+        self._vlc_smooth_sec = None
+        self._playback_audio_started = False
+        self._playback_seek_pending = False
+        self._playback_start_src_sec = 0.0
+        self._playback_start_wall_ts = time.monotonic()
         self._cancel_playback_tick()
         if self.media_player:
             self.media_player.stop()
@@ -412,13 +461,94 @@ class PlaybackSyncMixin:
         if duration_ms > 0 and self.media_duration <= 0:
             self.media_duration = duration_ms / 1000.0
             if hasattr(self, "nle_project") and not self.nle_project.clips:
-                self.nle_project.init_from_source(self.media_duration, filename=self.input_path.name if self.input_path else "")
-                self._refresh_modular_export_combos()
+                try:
+                    if hasattr(self.nle_project, "init_from_source"):
+                        self.nle_project.init_from_source(self.media_duration, filename=self.input_path.name if self.input_path else "")
+                    elif hasattr(self.nle_project, "reset_for_media"):
+                        self.nle_project.reset_for_media(self.input_path, self.media_duration)
+                    self._refresh_modular_export_combos()
+                except Exception:
+                    pass
             self.timeline_scale.configure(to=self._edited_total_duration() or self.media_duration)
 
         current_ms = self.media_player.get_time()
+        now_perf = time.perf_counter()
+        now_m = time.monotonic()
         if current_ms >= 0:
-            src_now = current_ms / 1000.0
+            start_s = getattr(self, "_playback_start_src_sec", None)
+            audio_started = getattr(self, "_playback_audio_started", False)
+            seek_pending = getattr(self, "_playback_seek_pending", False)
+            start_ts = getattr(self, "_playback_start_wall_ts", now_m)
+            elapsed = max(0.0, now_m - start_ts)
+            spd = self.selected_playback_speed() if hasattr(self, "selected_playback_speed") else 1.0
+            target_ms = int((start_s if start_s is not None else 0.0) * 1000)
+
+            # Check if VLC time is stale / pre-seek
+            is_stale_time = bool(start_s is not None and start_s > 0.5 and current_ms < (target_ms - 350))
+
+            # 1. Enforce seek and hold playhead until VLC reaches target_ms
+            if is_stale_time:
+                now_seek = time.monotonic()
+                last_retry = getattr(self, "_last_seek_retry_ts", 0.0)
+                if now_seek - last_retry > 0.08:
+                    self._last_seek_retry_ts = now_seek
+                    try:
+                        self.media_player.set_time(target_ms)
+                    except Exception:
+                        pass
+                src_now = start_s
+            elif seek_pending:
+                if abs(current_ms - target_ms) <= 120 or (start_s is None and current_ms <= 120):
+                    self._playback_seek_pending = False
+                    seek_pending = False
+                elif current_ms < target_ms - 250 or current_ms > target_ms + 1000:
+                    now_seek = time.monotonic()
+                    last_retry = getattr(self, "_last_seek_retry_ts", 0.0)
+                    if now_seek - last_retry > 0.08:
+                        self._last_seek_retry_ts = now_seek
+                        try:
+                            self.media_player.set_time(target_ms)
+                        except Exception:
+                            pass
+                src_now = start_s if start_s is not None else (current_ms / 1000.0)
+            elif not audio_started:
+                # 2. Check if VLC audio has officially begun rendering beyond the start point
+                if (target_ms - 50 <= current_ms <= target_ms + 400) or (start_s is None and 10 < current_ms < 400):
+                    self._playback_audio_started = True
+                    self._vlc_last_ms = current_ms
+                    self._vlc_last_perf = now_perf
+                    self._vlc_smooth_sec = current_ms / 1000.0
+                    src_now = self._vlc_smooth_sec
+                elif elapsed > 0.40 and not is_stale_time:
+                    self._playback_audio_started = True
+                    self._vlc_last_ms = current_ms
+                    self._vlc_last_perf = now_perf
+                    self._vlc_smooth_sec = current_ms / 1000.0
+                    src_now = self._vlc_smooth_sec
+                else:
+                    # Audio hardware is still buffering: lock playhead at exact start position!
+                    src_now = start_s if start_s is not None else (current_ms / 1000.0)
+            else:
+                last_ms = getattr(self, "_vlc_last_ms", None)
+                if last_ms is None or current_ms != last_ms:
+                    vlc_sec = current_ms / 1000.0
+                    prev_smooth = getattr(self, "_vlc_smooth_sec", None)
+                    if prev_smooth is None or abs(vlc_sec - prev_smooth) > 0.35:
+                        self._vlc_smooth_sec = vlc_sec
+                    else:
+                        self._vlc_smooth_sec = prev_smooth * 0.20 + vlc_sec * 0.80
+                    self._vlc_last_ms = current_ms
+                    self._vlc_last_perf = now_perf
+                    src_now = self._vlc_smooth_sec
+                else:
+                    dt = (now_perf - getattr(self, "_vlc_last_perf", now_perf)) * spd
+                    dt = max(0.0, min(0.05, dt))
+                    src_now = getattr(self, "_vlc_smooth_sec", current_ms / 1000.0) + dt
+
+            # Absolute monotonic safety clamp: NEVER allow forward jump or backward snap below start_s!
+            if start_s is not None and elapsed < 1.0:
+                max_allowed = start_s + (elapsed * spd) + 0.05
+                src_now = max(start_s, min(max_allowed, src_now))
             if hasattr(self, "nle_project") and self.nle_project.clips:
                 c_idx = getattr(self, "active_playback_clip_idx", 0)
                 if not (0 <= c_idx < len(self.nle_project.clips)):
@@ -447,6 +577,10 @@ class PlaybackSyncMixin:
                             self.active_playback_clip_idx = c_idx + 1
                             if abs(nxt_c["src_start"] - src_now) > 0.11:
                                 self.media_player.set_time(int(nxt_c["src_start"] * 1000))
+                                self._playback_start_src_sec = nxt_c["src_start"]
+                                self._playback_start_wall_ts = time.monotonic()
+                                self._playback_seek_pending = True
+                                self._playback_audio_started = False
                             self._apply_active_clip_playback_fx(nxt_c)
                             self._sync_transform_sliders_from_state()
                             src_now = nxt_c["src_start"]
@@ -470,8 +604,11 @@ class PlaybackSyncMixin:
             if hasattr(self, "davinci_timeline"):
                 self.davinci_timeline.set_playhead(tl_now, auto_follow=True)
 
-            self._sync_aux_audio_playback(tl_now, True)
-            self._sync_a1_audio_playback(tl_now, True)
+            now_aux_m = time.monotonic()
+            if now_aux_m - getattr(self, "_last_aux_audio_sync_ts", 0.0) > 0.08:
+                self._last_aux_audio_sync_ts = now_aux_m
+                self._sync_aux_audio_playback(tl_now, True)
+                self._sync_a1_audio_playback(tl_now, True)
 
             th_dlg = getattr(self, "_theater_dialog", None)
             if th_dlg is not None and th_dlg.winfo_exists():
@@ -490,7 +627,7 @@ class PlaybackSyncMixin:
             if hasattr(self, "expand_video_button"):
                 is_ar = (self.language_var.get() == "العربية") if hasattr(self, "language_var") else True
                 self.expand_video_button.configure(text="⛶ تكبير" if is_ar else "⛶ Fullscreen")
-        tick_ms = 33 if (getattr(self, "studio_live_preview_mode", False) and self.input_path and self.input_path.suffix.lower() in convert.VIDEO_EXTS) else 80
+        tick_ms = 20 if (self.media_player and self.media_player.is_playing()) else 40
         self.playback_tick = self.after(tick_ms, self._schedule_playback_tick)
 
     def _sync_aux_audio_playback(self, tl_sec: float, is_playing: bool):

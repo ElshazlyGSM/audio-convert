@@ -568,7 +568,13 @@ def extract_video_sample_frame(
                 "-c:v", "mjpeg",
                 "pipe:1",
             ]
-            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=8)
+            res = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                timeout=8,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
+            )
             if res.returncode == 0 and res.stdout and len(res.stdout) > 500:
                 with Image.open(io.BytesIO(res.stdout)) as im:
                     img = im.convert("RGB")

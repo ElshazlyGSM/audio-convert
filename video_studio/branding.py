@@ -316,13 +316,19 @@ def build_timed_rgba_overlay_filter(
     start_sec: Optional[float] = None,
     end_sec: Optional[float] = None,
     full_duration: bool = True,
+    anim_in: str = "none",
+    anim_out: str = "none",
+    anim_dur: float = 0.5,
+    anim_dur_in: Optional[float] = None,
+    anim_dur_out: Optional[float] = None,
     stream_id: str = "ov_0",
     input_label: str = "v_in",
     output_label: str = "v_out",
 ) -> str:
     """
     Constructs a collision-free FFmpeg filter segment for any pre-rendered RGBA PNG overlay
-    (Text+, Icon, Custom Image, or Logo) with optional timeline [start_sec, end_sec] gating.
+    (Text+, Icon, Custom Image, or Logo) with optional timeline [start_sec, end_sec] gating
+    and dynamic In/Out animations (Tilted Slide, Bounce, Pop, Spin, Gravity Drop, Fades).
     """
     image_path = Path(image_path).resolve()
     if not image_path.exists():
@@ -331,29 +337,147 @@ def build_timed_rgba_overlay_filter(
     img_esc = str(image_path).replace("\\", "/").replace(":", r"\:")
 
     if anchor == "center" and img_w and img_h:
+        x_base = f"{round(video_w * float(x_pct) - (img_w / 2.0))}"
+        y_base = f"{round(video_h * float(y_pct) - (img_h / 2.0))}"
         x_px = int(round(video_w * float(x_pct) - (img_w / 2.0)))
         y_px = int(round(video_h * float(y_pct) - (img_h / 2.0)))
     else:
+        x_base = f"{round(video_w * float(x_pct))}"
+        y_base = f"{round(video_h * float(y_pct))}"
         x_px = int(round(video_w * float(x_pct)))
         y_px = int(round(video_h * float(y_pct)))
 
-    # Allow partial edge placement without disappearing completely
-    if img_w and img_h:
-        x_px = max(-img_w + 16, min(video_w - 16, x_px))
-        y_px = max(-img_h + 16, min(video_h - 16, y_px))
-    else:
-        x_px = max(0, min(video_w - 20, x_px))
-        y_px = max(0, min(video_h - 20, y_px))
+    anim_in_key = str(anim_in or "none").lower()
+    anim_out_key = str(anim_out or "none").lower()
+    dur = max(0.1, min(3.0, float(anim_dur or 0.5)))
 
-    enable_part = ""
-    if not full_duration and start_sec is not None and end_sec is not None:
-        s_val = max(0.0, float(start_sec))
-        e_val = max(s_val + 0.05, float(end_sec))
-        enable_part = f":enable='between(t,{s_val:.3f},{e_val:.3f})'"
+    has_anim = (not full_duration) and (anim_in_key != "none" or anim_out_key != "none") and (start_sec is not None and end_sec is not None)
+
+    if not has_anim:
+        if img_w and img_h:
+            x_px = max(-img_w + 16, min(video_w - 16, x_px))
+            y_px = max(-img_h + 16, min(video_h - 16, y_px))
+        else:
+            x_px = max(0, min(video_w - 20, x_px))
+            y_px = max(0, min(video_h - 20, y_px))
+
+        enable_part = ""
+        if not full_duration and start_sec is not None and end_sec is not None:
+            s_val = max(0.0, float(start_sec))
+            e_val = max(s_val + 0.05, float(end_sec))
+            enable_part = f":enable='between(t,{s_val:.3f},{e_val:.3f})'"
+
+        return (
+            f"movie='{img_esc}',format=rgba[{stream_id}];"
+            f"[{input_label}][{stream_id}]overlay=x={x_px}:y={y_px}{enable_part}[{output_label}]"
+        )
+
+    # Dynamic Animation Generation
+    s = max(0.0, float(start_sec))
+    e = max(s + 0.1, float(end_sec))
+    d_in_v = float(anim_dur_in if anim_dur_in is not None else dur)
+    d_out_v = float(anim_dur_out if anim_dur_out is not None else dur)
+    dur_in = min(max(0.08, d_in_v), (e - s) * 0.49)
+    dur_out = min(max(0.08, d_out_v), (e - s) * 0.49)
+    s_out = e - dur_out
+
+    movie_filters = ["format=rgba"]
+    fade_in_str = f"fade=t=in:st={s:.3f}:d={dur_in:.3f}:alpha=1"
+    fade_out_str = f"fade=t=out:st={s_out:.3f}:d={dur_out:.3f}:alpha=1"
+
+    rot_exprs = []
+    if anim_in_key == "tilt_slide_up":
+        rot_exprs.append(f"if(between(t,{s:.3f},{s+dur_in:.3f}),(-12*PI/180)*(1-(t-{s:.3f})/{dur_in:.3f}),0)")
+    elif anim_in_key == "tilt_slide_down":
+        rot_exprs.append(f"if(between(t,{s:.3f},{s+dur_in:.3f}),(12*PI/180)*(1-(t-{s:.3f})/{dur_in:.3f}),0)")
+    elif anim_in_key == "spin_in":
+        rot_exprs.append(f"if(between(t,{s:.3f},{s+dur_in:.3f}),(-2*PI)*(1-(t-{s:.3f})/{dur_in:.3f}),0)")
+
+    if anim_out_key == "tilt_slide_down":
+        rot_exprs.append(f"if(between(t,{s_out:.3f},{e:.3f}),(12*PI/180)*((t-{s_out:.3f})/{dur_out:.3f}),0)")
+    elif anim_out_key == "spin_out":
+        rot_exprs.append(f"if(between(t,{s_out:.3f},{e:.3f}),(2*PI)*((t-{s_out:.3f})/{dur_out:.3f}),0)")
+
+    if anim_in_key != "none":
+        if anim_in_key == "flash":
+            movie_filters.append(f"fade=t=in:st={s:.3f}:d={dur_in*0.25:.3f}:alpha=1")
+        elif anim_in_key in ("fade", "tilt_slide_up", "tilt_slide_down", "slide_up", "slide_down",
+                             "slide_left", "slide_right", "float_in", "bounce", "pop",
+                             "zoom_in", "zoom_out", "dramatic_zoom", "spin_in", "drop_in", "glitch"):
+            movie_filters.append(fade_in_str)
+
+    if anim_out_key != "none":
+        if anim_out_key == "flash":
+            movie_filters.append(f"fade=t=out:st={s_out + dur_out*0.7:.3f}:d={dur_out*0.3:.3f}:alpha=1")
+        elif anim_out_key in ("fade", "slide_down", "slide_up", "slide_left", "slide_right",
+                              "tilt_slide_down", "shrink", "zoom_out", "spin_out", "drop_out"):
+            movie_filters.append(fade_out_str)
+
+    if rot_exprs:
+        rot_sum = "+".join(rot_exprs)
+        movie_filters.append(f"rotate='{rot_sum}':c=none")
+
+    # Spatial Translation Offsets
+    p_in = f"((t-{s:.3f})/{dur_in:.3f})"
+    ease_in = f"(1-(1-{p_in})*(1-{p_in})*(1-{p_in}))"
+    q_out = f"((t-{s_out:.3f})/{dur_out:.3f})"
+
+    dx_parts = []
+    dy_parts = []
+
+    if anim_in_key == "tilt_slide_up":
+        dy_parts.append(f"if(between(t,{s:.3f},{s+dur_in:.3f}),(1-{ease_in})*(0.22*H),0)")
+        dx_parts.append(f"if(between(t,{s:.3f},{s+dur_in:.3f}),-(1-{ease_in})*(0.04*W),0)")
+    elif anim_in_key == "tilt_slide_down":
+        dy_parts.append(f"if(between(t,{s:.3f},{s+dur_in:.3f}),-(1-{ease_in})*(0.22*H),0)")
+        dx_parts.append(f"if(between(t,{s:.3f},{s+dur_in:.3f}),-(1-{ease_in})*(0.04*W),0)")
+    elif anim_in_key in ("slide_up", "slide_bottom"):
+        dy_parts.append(f"if(between(t,{s:.3f},{s+dur_in:.3f}),(1-{ease_in})*(0.22*H),0)")
+    elif anim_in_key in ("slide_down", "slide_top"):
+        dy_parts.append(f"if(between(t,{s:.3f},{s+dur_in:.3f}),-(1-{ease_in})*(0.22*H),0)")
+    elif anim_in_key in ("slide_left",):
+        dx_parts.append(f"if(between(t,{s:.3f},{s+dur_in:.3f}),(1-{ease_in})*(0.30*W),0)")
+    elif anim_in_key in ("slide_right",):
+        dx_parts.append(f"if(between(t,{s:.3f},{s+dur_in:.3f}),-(1-{ease_in})*(0.30*W),0)")
+    elif anim_in_key in ("float_in",):
+        dy_parts.append(f"if(between(t,{s:.3f},{s+dur_in:.3f}),(1-{ease_in})*(0.08*H),0)")
+    elif anim_in_key in ("bounce",):
+        dy_parts.append(f"if(between(t,{s:.3f},{s+dur_in:.3f}),(1-{p_in})*sin({p_in}*7.85)*(-0.15*H)+(1-{p_in})*(1-{p_in})*(0.20*H),0)")
+    elif anim_in_key in ("pop",):
+        dy_parts.append(f"if(between(t,{s:.3f},{s+dur_in:.3f}),(1-{p_in})*(1-{p_in})*(0.12*H),0)")
+    elif anim_in_key in ("drop_in",):
+        dy_parts.append(f"if(between(t,{s:.3f},{s+dur_in:.3f}),-(1-{p_in})*(1-{p_in})*(0.45*H),0)")
+    elif anim_in_key in ("glitch",):
+        dx_parts.append(f"if(between(t,{s:.3f},{s+dur_in:.3f}),(1-{p_in})*18*sin({p_in}*60),0)")
+
+    if anim_out_key in ("slide_down", "slide_bottom"):
+        dy_parts.append(f"if(between(t,{s_out:.3f},{e:.3f}),({q_out}*{q_out})*(0.35*H),0)")
+    elif anim_out_key in ("slide_up", "slide_top"):
+        dy_parts.append(f"if(between(t,{s_out:.3f},{e:.3f}),-({q_out}*{q_out})*(0.35*H),0)")
+    elif anim_out_key in ("slide_left",):
+        dx_parts.append(f"if(between(t,{s_out:.3f},{e:.3f}),-({q_out}*{q_out})*(0.40*W),0)")
+    elif anim_out_key in ("slide_right",):
+        dx_parts.append(f"if(between(t,{s_out:.3f},{e:.3f}),({q_out}*{q_out})*(0.40*W),0)")
+    elif anim_out_key in ("tilt_slide_down",):
+        dy_parts.append(f"if(between(t,{s_out:.3f},{e:.3f}),({q_out}*{q_out})*(0.35*H),0)")
+        dx_parts.append(f"if(between(t,{s_out:.3f},{e:.3f}),({q_out}*{q_out})*(0.04*W),0)")
+    elif anim_out_key in ("drop_out",):
+        dy_parts.append(f"if(between(t,{s_out:.3f},{e:.3f}),({q_out}*{q_out}*{q_out})*(0.50*H),0)")
+
+    x_expr = x_base
+    if dx_parts:
+        x_expr += "+" + "+".join(dx_parts)
+
+    y_expr = y_base
+    if dy_parts:
+        y_expr += "+" + "+".join(dy_parts)
+
+    movie_str = ",".join(movie_filters)
+    enable_part = f":enable='between(t,{s:.3f},{e:.3f})'"
 
     return (
-        f"movie='{img_esc}',format=rgba[{stream_id}];"
-        f"[{input_label}][{stream_id}]overlay=x={x_px}:y={y_px}{enable_part}[{output_label}]"
+        f"movie='{img_esc}',{movie_str}[{stream_id}];"
+        f"[{input_label}][{stream_id}]overlay=x='{x_expr}':y='{y_expr}':eval=frame{enable_part}[{output_label}]"
     )
 
 

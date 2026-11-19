@@ -269,6 +269,11 @@ def _append_post_transform_overlays(
                 start_sec=m_item.get("start_sec"),
                 end_sec=m_item.get("end_sec"),
                 full_duration=bool(m_item.get("full_duration", False)),
+                anim_in=m_item.get("anim_in", "none"),
+                anim_out=m_item.get("anim_out", "none"),
+                anim_dur=float(m_item.get("anim_dur", 0.5) or 0.5),
+                anim_dur_in=m_item.get("anim_dur_in"),
+                anim_dur_out=m_item.get("anim_dur_out"),
                 stream_id=f"ov_m_{step}",
                 input_label=cur_label,
                 output_label=next_label,
@@ -328,6 +333,11 @@ def _append_post_transform_overlays(
                 start_sec=t_item.get("start_sec"),
                 end_sec=t_item.get("end_sec"),
                 full_duration=bool(t_item.get("full_duration", True)),
+                anim_in=t_item.get("anim_in", "none"),
+                anim_out=t_item.get("anim_out", "none"),
+                anim_dur=float(t_item.get("anim_dur", 0.5) or 0.5),
+                anim_dur_in=t_item.get("anim_dur_in"),
+                anim_dur_out=t_item.get("anim_dur_out"),
                 stream_id=f"ov_t_{step}",
                 input_label=cur_label,
                 output_label=next_label,
@@ -375,6 +385,11 @@ def _append_post_transform_overlays(
                     start_sec=l_item.get("start_sec"),
                     end_sec=l_item.get("end_sec"),
                     full_duration=bool(l_item.get("full_duration", True)),
+                    anim_in=l_item.get("anim_in", "none"),
+                    anim_out=l_item.get("anim_out", "none"),
+                    anim_dur=float(l_item.get("anim_dur", 0.5) or 0.5),
+                    anim_dur_in=l_item.get("anim_dur_in"),
+                    anim_dur_out=l_item.get("anim_dur_out"),
                     stream_id=f"ov_l_{step}",
                     input_label=cur_label,
                     output_label=next_label,
@@ -415,6 +430,9 @@ def _append_post_transform_overlays(
                         start_sec=logo_config.get("start_sec"),
                         end_sec=logo_config.get("end_sec"),
                         full_duration=bool(logo_config.get("full_duration", True)),
+                        anim_in=logo_config.get("anim_in", "none"),
+                        anim_out=logo_config.get("anim_out", "none"),
+                        anim_dur=float(logo_config.get("anim_dur", 0.5) or 0.5),
                         stream_id=f"ov_lr_{step}",
                         input_label=cur_label,
                         output_label=next_label,
@@ -625,15 +643,19 @@ def export_styled_video(
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
     if ffmpeg_exe is None:
-        for cand in [
-            Path("E:/Songs/tools/ffmpeg-essentials/ffmpeg-8.1.2-essentials_build/bin/ffmpeg.exe"),
-            Path("ffmpeg.exe"),
-        ]:
-            if cand.exists():
-                ffmpeg_exe = str(cand)
-                break
-        if not ffmpeg_exe:
-            ffmpeg_exe = "ffmpeg"
+        try:
+            import convert
+            ffmpeg_exe = str(convert.ffmpeg_executable())
+        except Exception:
+            for cand in [
+                Path("E:/Songs/tools/ffmpeg-essentials/ffmpeg-8.1.2-essentials_build/bin/ffmpeg.exe"),
+                Path("ffmpeg.exe"),
+            ]:
+                if cand.exists():
+                    ffmpeg_exe = str(cand)
+                    break
+            if not ffmpeg_exe:
+                ffmpeg_exe = "ffmpeg"
 
     # Probe input dimensions, duration, and audio presence
     in_w, in_h = 1920, 1080
@@ -641,8 +663,13 @@ def export_styled_video(
     has_audio = True
     try:
         import shutil
-        cand_probe = Path(str(ffmpeg_exe)).with_name("ffprobe.exe")
-        ffprobe_bin = str(cand_probe) if cand_probe.exists() else (shutil.which("ffprobe") or "ffprobe")
+        ffprobe_bin = None
+        try:
+            import convert
+            ffprobe_bin = str(convert.ffprobe_executable())
+        except Exception:
+            cand_probe = Path(str(ffmpeg_exe)).with_name("ffprobe.exe")
+            ffprobe_bin = str(cand_probe) if cand_probe.exists() else (shutil.which("ffprobe") or "ffprobe")
         probe_cmd = [
             ffprobe_bin,
             "-v", "error",

@@ -43,6 +43,7 @@ from .timeline_engine import (
     NLEProjectState,
     FastVideoPreviewProvider,
     extract_audio_waveform_peaks,
+    WaveformPeaks,
     parse_srt_segments,
 )
 from .filter_compositor import (
@@ -125,6 +126,7 @@ __all__ = [
     "NLEProjectState",
     "FastVideoPreviewProvider",
     "extract_audio_waveform_peaks",
+    "WaveformPeaks",
     "build_composite_video_filter",
     "export_styled_video",
     "DEFAULT_COLOR_CONFIG",
